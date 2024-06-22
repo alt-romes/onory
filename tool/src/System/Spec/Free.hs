@@ -16,11 +16,11 @@ type System a = Free SystemF a
 -- An algebra to generate the embedded language of distributed systems specifications.
 data SystemF next where
 
-  DeclareNotification
-    :: Typeable nt => Maybe Name -> (Notification nt -> next) -> SystemF next
+  DeclareEvent
+    :: Typeable et => Event et -> (Event et -> next) -> SystemF next
 
-  UponNotification
-    :: Notification nt -> (nt -> System ()) -> next -> SystemF next
+  UponEvent
+    :: Event et -> (et -> System ()) -> next -> SystemF next
 
   GetSelf
     :: (Host -> next) -> SystemF next
@@ -28,13 +28,16 @@ data SystemF next where
   MkNew
     :: a -> (Mutable a -> next) -> SystemF next
 
+  ModifyState
+    :: Mutable a -> (a -> a) -> next -> SystemF next
+
 --------------------------------------------------------------------------------
 -- Core datatypes
 
-data Notification notification_t
+data Event evt_t
   = Request Name
   | Indication Name
-  | Message
+  | Message (TypeRep evt_t)
   deriving Show
 
 newtype Mutable a = Mutable (IORef a)
@@ -47,10 +50,11 @@ type Host = String
 -- I'll give you a functor ...
 instance Functor SystemF where
   fmap f = \case
-    DeclareNotification n c -> DeclareNotification n (f . c)
-    UponNotification x impl next -> UponNotification x impl (f next)
+    DeclareEvent n c -> DeclareEvent n (f . c)
+    UponEvent x impl next -> UponEvent x impl (f next)
     GetSelf c -> GetSelf (f . c)
     MkNew t c -> MkNew t (f . c)
+    ModifyState a b n -> ModifyState a b (f n)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)
