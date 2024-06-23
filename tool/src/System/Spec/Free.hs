@@ -9,18 +9,18 @@ import Control.Monad.Free
 import Control.Monad.Free.TH
 
 -- | A distributed system specification
-type System a = Free SystemF a
+type System = Free SystemF
 
 -- | Not /that/ SystemF.
 --
 -- An algebra to generate the embedded language of distributed systems specifications.
 data SystemF next where
 
-  DeclareEvent
-    :: Typeable et => Event et -> (Event et -> next) -> SystemF next
-
   UponEvent
     :: Event et -> (et -> System ()) -> next -> SystemF next
+
+  TriggerEvent
+    :: Event et -> et -> next -> SystemF next
 
   GetSelf
     :: (Host -> next) -> SystemF next
@@ -30,6 +30,9 @@ data SystemF next where
 
   ModifyState
     :: Mutable a -> (a -> a) -> next -> SystemF next
+
+  GetState
+    :: Mutable a -> (a -> next) -> SystemF next
 
 --------------------------------------------------------------------------------
 -- Core datatypes
@@ -50,11 +53,12 @@ type Host = String
 -- I'll give you a functor ...
 instance Functor SystemF where
   fmap f = \case
-    DeclareEvent n c -> DeclareEvent n (f . c)
     UponEvent x impl next -> UponEvent x impl (f next)
+    TriggerEvent x e n -> TriggerEvent x e (f n)
     GetSelf c -> GetSelf (f . c)
     MkNew t c -> MkNew t (f . c)
     ModifyState a b n -> ModifyState a b (f n)
+    GetState a n -> GetState a (f . n)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)
