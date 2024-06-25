@@ -42,9 +42,9 @@ data Event evt_t
   = Request    { name :: Name, argTy :: TypeRep evt_t }
   | Indication { name :: Name, argTy :: TypeRep evt_t }
   | Message    { argTy :: TypeRep evt_t }
-  deriving Show
+  deriving (Show, Eq, Ord)
 
-newtype Mutable a = Mutable (TVar a)
+newtype Mutable a = Mutable (IORef a)
 
 type Name = String
 type Host = String

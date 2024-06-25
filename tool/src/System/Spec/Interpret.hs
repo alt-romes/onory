@@ -1,6 +1,6 @@
 {-# LANGUAGE DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase #-}
 module System.Spec.Interpret
-  ( runSystem
+  ( runCore, interpSystem
   ) where
 
 import Data.IORef
@@ -18,56 +18,85 @@ import qualified Data.Map as M
 import System.Spec.Free
 import Control.Concurrent.STM
 import Control.Concurrent
+import Unsafe.Coerce (unsafeCoerce)
 
 --------------------------------------------------------------------------------
 -- * Interpreters
 
+runCore :: Core a -> IO ()
+runCore c = void do
+  hs <- newIORef M.empty
+  mq <- newChan
+  distribute `unCore` (mq, hs)
+  c `unCore` (mq, hs)
+
 -- | Run a stack of protocols together
-runSystem :: {-[Protocol ()]-} System a -> IO ()
-runSystem sys = runCore do
+interpSystem :: {-[Protocol ()]-} System a -> Core ()
+interpSystem sys = void do
 
   let runF :: SystemF (Core a) -> Core a
       runF = \case
         UponEvent x impl next -> registerHandler x impl >> next
         TriggerEvent x e next -> queueMessage x e >> next
         GetSelf c -> c "localhost"
-        MkNew i c -> c . Mutable =<< liftIO (newTVarIO i)
-        ModifyState (Mutable a) b n -> do
-          ModifyState a b (f n)
-        GetState a n -> GetState a (f . n)
+        MkNew i c -> c . Mutable =<< liftIO (newIORef i)
+        ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b) >> n
+        GetState (Mutable a) n -> liftIO (readIORef a) >>= n
 
   iterM runF sys
 
--- Could it ever be that under too much contention an atomic block
--- could be too slow to terminate if enough TVars are involved? My
--- guess is not (we can do thousands of TVar transactions), and not
--- to worry until it is observed.
--- An alternative design is to only dispatch one handler at once.
--- That basically means the handler map has to have each function and invoke
--- it after receiving a message related to it.
--- But the "all handlers optimistically running at once" is more fun.
+-- It's too easy to only dispatch one handler at once, so we'll just do that.
+-- The "all handlers optimistically running at once" in STM would be more fun,
+-- but would require making ModifyState and GetState only available within
+-- handlers or smtg, to be available to execute handlers in STM.
+
+distribute :: Core ()
+distribute = Core \(mq, href) -> do
+  let loop = unCore distribute (mq, href)
+  handlers <- readIORef href
+  Msg e t <- readChan mq
+  case M.lookup (EK e) handlers of
+    Nothing -> {- message lost -} loop
+    Just hs -> do
+      -- Write to all handlers the same message
+      forM_ hs $ \(Some ch) ->
+        writeChan (unsafeCoerce ch) t
+      loop
 
 --------------------------------------------------------------------------------
 -- * Handlers
 
 -- | Map events to their handlers
-type Handlers = IORef (Map EventKey [Handler])
+type Handlers = IORef (Map EventKey [Some Handler])
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
 data EventKey = forall t. EK (Event t)
+instance Eq EventKey where
+  (==) (EK a) (EK b) = a == b
 
--- | A handler is a function from some type to a System execution.
--- The type of the function argument is given by the type rep of the event key
--- that maps to this handler in the handlers map.
-data Handler = forall t. H (t -> System ())
+data Some k = forall t. Some (k t)
 
-registerHandler :: Event t -> (t -> System ()) -> Core ()
-registerHandler evt f = Core \(_, handlers) -> do
-  -- TODO: Make sure handler is not yet registered... otherwise we'll have two
-  -- different handlers pulling from a queue with non-duplicate messages...
+-- A handler is a thread reading @t@s from a channel.
+type Handler = Chan
+
+-- -- | A handler is a function from some type to a System execution.
+-- -- The type of the function argument is given by the type rep of the event key
+-- -- that maps to this handler in the handlers map.
+-- data Handler = forall t. H (t -> System ())
+
+registerHandler :: ∀ t. Event t -> (t -> System ()) -> Core ()
+registerHandler evt f = Core \(mq, href) -> do
+  ch <- newChan @t
+
+  _ <- forkIO $
+    let loop = do
+          v <- readChan ch
+          interpSystem (f v) `unCore` (mq, href)
+     in loop
+
   let ek = EK evt
-      h  = H f
-  modifyIORef' handlers (M.insertWith (<>) ek [h])
+      h  = Some ch
+  modifyIORef' href (M.insertWith (<>) ek [h])
 
 queueMessage :: Event t -> t -> Core ()
 queueMessage evt t = Core \(q, _) -> writeChan q (Msg evt t)
@@ -80,10 +109,4 @@ newtype Core a = Core { unCore :: (MsgQueue, Handlers) -> IO a } -- needs to be 
 type MsgQueue = Chan Msg
 
 data Msg = forall t. Msg (Event t) t
-
-runCore :: Core a -> IO ()
-runCore c = void do
-  hs <- newIORef M.empty
-  mq <- newChan
-  unCore c (mq, hs)
 
