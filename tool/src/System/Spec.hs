@@ -4,6 +4,7 @@ module System.Spec
   ( module System.Spec
   -- re-exports, for now at the end.
   , Host, System
+  , runSystem
 
   -- re-export Prelude, hiding the functions we override.
   -- Importers should use no implicit prelude
@@ -25,6 +26,7 @@ import Prelude hiding ((==), compare, (<=), (<), (>=), (>))
 import qualified Prelude as P
 
 import System.Spec.Free
+import System.Spec.Interpret
 
 --------------------------------------------------------------------------------
 -- * Main interface
@@ -59,11 +61,7 @@ ok = pure ()
 --------------------------------------------------------------------------------
 -- * Known events?
 
-neighbourUp :: Event (Set Host)
-neighbourUp = Indication "neighbourUp"
-
-neighbourDown :: Event (Set Host)
-neighbourDown = Indication "neighbourDown"
+--- ...
 
 --------------------------------------------------------------------------------
 -- * State manipulation
@@ -194,34 +192,6 @@ instance {-# OVERLAPPING #-} SOrd a => SOrd (Mutable a) where
     x' <- get =<< liftS x
     y' <- get =<< liftS y
     compare x' y'
-
---------------------------------------------------------------------------------
--- * Interpreters
-
--- ppr :: Show a => System a -> IO ()
--- ppr sys = do
---   _ <- iterM go sys
---   return ()
---   where
---     go :: SystemF (IO a) -> IO a
---     go (CreateRequest @t n f) = do
---       putStrLn ("new request " ++ show n ++ " of type " ++ show (typeRep @t))
---       f (UndReq n)
---     go (CreateIndication @t n f) = do
---       putStrLn ("new indication " ++ show n ++ " of type " ++ show (typeRep @t))
---       f (Indication n)
---     go (GetSelf f) = do
---       putStrLn "localhost"
---       f "localhost"
---     go (MkNew x f) = do
---       putStrLn ("new " ++ show x)
---       f x
---     go (UponReq x _f n) = do
---       putStrLn ("upon " ++ show x ++ " do ...")
---       n
---     go (UponInd x _f n) = do
---       putStrLn ("upon " ++ show x ++ " do ...")
---       n
 
 --------------------------------------------------------------------------------
 -- * Utilities

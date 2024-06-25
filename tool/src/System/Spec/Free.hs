@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase #-}
 module System.Spec.Free where
 
+import Control.Concurrent.STM
 import Data.IORef
 import Data.Kind
 import Type.Reflection
@@ -13,7 +14,7 @@ type System = Free SystemF
 
 -- | Not /that/ SystemF.
 --
--- An algebra to generate the embedded language of distributed systems specifications.
+-- A functor to generate the embedded language of distributed systems specifications.
 data SystemF next where
 
   UponEvent
@@ -38,12 +39,12 @@ data SystemF next where
 -- Core datatypes
 
 data Event evt_t
-  = Request Name
-  | Indication Name
-  | Message (TypeRep evt_t)
+  = Request    { name :: Name, argTy :: TypeRep evt_t }
+  | Indication { name :: Name, argTy :: TypeRep evt_t }
+  | Message    { argTy :: TypeRep evt_t }
   deriving Show
 
-newtype Mutable a = Mutable (IORef a)
+newtype Mutable a = Mutable (TVar a)
 
 type Name = String
 type Host = String

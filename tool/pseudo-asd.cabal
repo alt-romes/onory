@@ -18,11 +18,11 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  System.Spec, System.Spec.Free
+    exposed-modules:  System.Spec, System.Spec.Interpret, System.Spec.Free
     -- other-modules:
     -- other-extensions:
     -- We depend on GHC 9.10 since we use visible forall in types of terms.
-    build-depends:    base >= 4.19, free, containers
+    build-depends:    base >= 4.19, free, containers, mtl, stm
     hs-source-dirs:   src
     default-language: GHC2021
 
