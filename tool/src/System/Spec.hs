@@ -4,7 +4,6 @@ module System.Spec
   ( module System.Spec
   -- re-exports, for now at the end.
   , Host, System
-  , runSystem
 
   -- re-export Prelude, hiding the functions we override.
   -- Importers should use no implicit prelude
@@ -31,11 +30,11 @@ import System.Spec.Interpret
 --------------------------------------------------------------------------------
 -- * Main interface
 
-request :: Name -> Event req
-request name = Request name
+request :: ∀ req. Typeable req => Name -> Event req
+request name = Request name (typeRep @req)
 
-indication :: Name -> Event ind
-indication name = Indication name
+indication :: ∀ ind. Typeable ind => Name -> Event ind
+indication name = Indication name (typeRep @ind)
 
 self :: System Host
 self = getSelf
@@ -49,11 +48,11 @@ upon = uponEvent
 trigger :: Event n -> n -> System ()
 trigger = triggerEvent
 
-receive :: Typeable msg => Event msg
-receive @msg = Message (typeRep @msg)
+receive :: ∀ msg. Typeable msg => Event msg
+receive = Message (typeRep @msg)
 
-send :: Typeable msg => Event msg
-send @msg = Message (typeRep @msg)
+send :: ∀ msg. Typeable msg => Event msg
+send = Message (typeRep @msg)
 
 ok :: System ()
 ok = pure ()

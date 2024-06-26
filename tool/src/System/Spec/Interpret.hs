@@ -30,7 +30,8 @@ runCore :: Core a -> IO MsgQueue
 runCore c = do
   hs <- newIORef M.empty
   mq <- newChan
-  worker `unCore` (mq, hs)
+  forkIO $
+    worker `unCore` (mq, hs)
   _ <- c `unCore` (mq, hs)
   return mq
 
@@ -48,16 +49,14 @@ interpSystem sys = void do
 
   iterM runF sys
 
--- It's too easy to only dispatch one handler at once, so we'll just do that.
--- The "all handlers optimistically running at once" in STM would be more fun,
--- but would require making ModifyState and GetState only available within
--- handlers or smtg, to be available to execute handlers in STM.
-
 worker :: Core ()
 worker = Core \(mq, href) -> do
   let loop = unCore worker (mq, href)
   handlers <- readIORef href
+
+  -- Waits for message
   Msg e t <- readChan mq
+
   case M.lookup (EK e) handlers of
     Nothing -> {- message lost -} loop
     Just hs -> do
@@ -90,15 +89,21 @@ queueMessage evt t = Core \(q, _) -> writeChan q (Msg evt t)
 
 --------------------------------------------------------------------------------
 
+type MsgQueue = Chan Msg
+data Msg = forall t. Msg (Event t) t
+
+--------------------------------------------------------------------------------
+-- * Core monad
+
 newtype Core a = Core { unCore :: (MsgQueue, Handlers) -> IO a } -- needs to be STM since the handlers run atomically...
   deriving (Functor, Applicative, Monad, MonadIO) via (ReaderT (MsgQueue, Handlers) IO)
 
-type MsgQueue = Chan Msg
-
-data Msg = forall t. Msg (Event t) t
+--------------------------------------------------------------------------------
+-- * EventKey
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
 data EventKey = forall t. EK (Event t)
+
 instance Eq EventKey where
   (==) (EK a) (EK b)
     | Message r1 <- a
@@ -115,18 +120,3 @@ instance Ord EventKey where
     | otherwise
     = a.name `compare` b.name <> SomeTypeRep a.argTy `compare` SomeTypeRep b.argTy
 
---------------------------------------------------------------------------------
-
--- registerHandler :: ∀ t. Event t -> (t -> System ()) -> Core ()
--- registerHandler evt f = Core \(mq, href) -> do
---   ch <- newChan @t
-
---   _ <- forkIO $
---     let loop = do
---           v <- readChan ch
---           interpSystem (f v) `unCore` (mq, href)
---      in loop
-
---   let ek = EK evt
---       h  = Some ch
---   modifyIORef' href (M.insertWith (<>) ek [h])
