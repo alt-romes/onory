@@ -11,6 +11,7 @@ module System.Spec
   )
   where
 
+import GHC.Records
 import Type.Reflection
 import Data.Kind
 import Control.Monad hiding (when)
@@ -21,7 +22,7 @@ import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
 
-import Prelude hiding ((==), compare, (<=), (<), (>=), (>))
+import Prelude hiding ((==), compare, (<=), (<), (>=), (>), (&&), (||), not)
 import qualified Prelude as P
 
 import System.Spec.Free
@@ -51,7 +52,8 @@ trigger = triggerEvent
 receive :: ∀ msg. Typeable msg => Event msg
 receive = Message (typeRep @msg)
 
-send :: ∀ msg. Typeable msg => Event msg
+-- | Send a message. The type of message sent must have
+send :: ∀ msg. (Typeable msg, HasField "from" msg Host, HasField "to" msg Host) => Event msg
 send = Message (typeRep @msg)
 
 ok :: System ()
@@ -84,11 +86,11 @@ when sb sc = do
   if b then void sc
        else pure ()
 
-ifThenElse :: LiftS a Bool => a -> System b -> System c -> System ()
+ifThenElse :: LiftS a Bool => a -> System b -> System b -> System b
 ifThenElse sb st sf = do
   b <- liftS sb
-  if b then void st
-       else void sf
+  if b then st
+       else sf
 
 -- | A placebo
 call :: ∀ a. a -> a
@@ -104,10 +106,10 @@ class Container a where
   foreach :: a -> (Elem a -> System b) -> System ()
   (+=) :: a -> Elem a -> AR a
   (-=) :: a -> Key a  -> AR a
-  size :: a -> System Int
+  size :: LiftS b a => b -> System Int
   contains :: a -> Key a -> System Bool
   notin    :: Key a -> a -> System Bool
-  notin k c = not <$> contains c k
+  notin k c = P.not <$> contains c k
 
 instance P.Ord a => Container (Set a) where
   type Elem (Set a) = a
@@ -116,7 +118,7 @@ instance P.Ord a => Container (Set a) where
   foreach = forM_ . S.toList
   (+=) = flip S.insert
   (-=) = flip S.delete
-  size = pure . S.size
+  size = fmap S.size . liftS
   contains = fmap pure . flip S.member
 
 instance P.Ord k => Container (Map k a) where
@@ -126,7 +128,7 @@ instance P.Ord k => Container (Map k a) where
   foreach = forM_ . M.toList
   (+=) = flip $ uncurry M.insert
   (-=) = flip M.delete
-  size = pure . M.size
+  size = fmap M.size . liftS
   contains = fmap pure . flip M.member
 
 instance (Container a, AR a ~ a) => Container (Mutable a) where
@@ -138,7 +140,7 @@ instance (Container a, AR a ~ a) => Container (Mutable a) where
     foreach c f
   (+=) ref x = modify ref (+= x)
   (-=) ref x = modify ref (-= x)
-  size = get >=> size
+  size = size <=< get <=< liftS
   contains ref k = get ref >>= (`contains` k)
 
 -- | A new, empty, set
@@ -152,13 +154,20 @@ pattern Map <- _ where
   Map = M.empty
 
 --------------------------------------------------------------------------------
+-- * Random
+
+-- ToDo:
+random :: Container a => a -> System (Elem a)
+random = undefined
+
+--------------------------------------------------------------------------------
 -- * Expressions
 
 class SEq c where
   (==), (!=)
     :: (LiftS a c, LiftS b c) => a -> b -> System Bool
 
-  (!=) x y = not <$> x == y
+  (!=) x y = P.not <$> (x == y)
 
 instance {-# OVERLAPPABLE #-} Eq a => SEq a where
   (==) x y = (P.==) <$> liftS x <*> liftS y
@@ -180,8 +189,8 @@ class SOrd c where
     c <- compare x y
     return $ case c of { GT -> False; _ -> True }
   x >= y = y <= x
-  x > y = not <$> x <= y
-  x < y = not <$> y <= x
+  x > y = P.not <$> (x <= y)
+  x < y = P.not <$> (y <= x)
 
 instance {-# OVERLAPPABLE #-} P.Ord a => SOrd a where
   compare x y = P.compare <$> liftS x <*> liftS y
@@ -191,6 +200,27 @@ instance {-# OVERLAPPING #-} SOrd a => SOrd (Mutable a) where
     x' <- get =<< liftS x
     y' <- get =<< liftS y
     compare x' y'
+
+(&&) :: (LiftS a Bool, LiftS b Bool) => a -> b -> System Bool
+(&&) a b = (P.&&) <$> liftS a <*> liftS b
+
+(||) :: (LiftS a Bool, LiftS b Bool) => a -> b -> System Bool
+(||) a b = (P.||) <$> liftS a <*> liftS b
+
+not :: LiftS a Bool => a -> System Bool
+not a = P.not <$> liftS a
+
+true, false :: Bool
+true = True; false = False
+
+infixr 3 &&
+infixr 2 ||
+infix 4 <
+infix 4 <=
+infix 4 >
+infix 4 >=
+infix 4 ==
+infix 4 !=
 
 --------------------------------------------------------------------------------
 -- * Utilities
