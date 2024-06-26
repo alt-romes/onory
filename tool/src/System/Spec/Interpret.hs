@@ -1,4 +1,4 @@
-{-# LANGUAGE DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot, DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase #-}
 module System.Spec.Interpret
   ( runCore, interpSystem
   ) where
@@ -23,15 +23,18 @@ import Unsafe.Coerce (unsafeCoerce)
 --------------------------------------------------------------------------------
 -- * Interpreters
 
-runCore :: Core a -> IO ()
-runCore c = void do
+-- | Run a stack of protocols together
+-- runTower :: [Protocol] -> IO ()
+
+runCore :: Core a -> IO MsgQueue
+runCore c = do
   hs <- newIORef M.empty
   mq <- newChan
-  distribute `unCore` (mq, hs)
-  c `unCore` (mq, hs)
+  worker `unCore` (mq, hs)
+  _ <- c `unCore` (mq, hs)
+  return mq
 
--- | Run a stack of protocols together
-interpSystem :: {-[Protocol ()]-} System a -> Core ()
+interpSystem :: System a -> Core ()
 interpSystem sys = void do
 
   let runF :: SystemF (Core a) -> Core a
@@ -50,52 +53,36 @@ interpSystem sys = void do
 -- but would require making ModifyState and GetState only available within
 -- handlers or smtg, to be available to execute handlers in STM.
 
-distribute :: Core ()
-distribute = Core \(mq, href) -> do
-  let loop = unCore distribute (mq, href)
+worker :: Core ()
+worker = Core \(mq, href) -> do
+  let loop = unCore worker (mq, href)
   handlers <- readIORef href
   Msg e t <- readChan mq
   case M.lookup (EK e) handlers of
     Nothing -> {- message lost -} loop
     Just hs -> do
-      -- Write to all handlers the same message
-      forM_ hs $ \(Some ch) ->
-        writeChan (unsafeCoerce ch) t
+      -- Run all handlers with the same message
+      forM_ hs \(H h) -> unsafeCoerce h t
       loop
 
 --------------------------------------------------------------------------------
 -- * Handlers
 
 -- | Map events to their handlers
-type Handlers = IORef (Map EventKey [Some Handler])
+type Handlers = IORef (Map EventKey [Handler])
 
--- | An event is its own key, but the type is preserved in the type-rep field only.
-data EventKey = forall t. EK (Event t)
-instance Eq EventKey where
-  (==) (EK a) (EK b) = a == b
+-- -- A handler is a thread reading @t@s from a channel.
+-- type Handler = Chan
 
-data Some k = forall t. Some (k t)
-
--- A handler is a thread reading @t@s from a channel.
-type Handler = Chan
-
--- -- | A handler is a function from some type to a System execution.
--- -- The type of the function argument is given by the type rep of the event key
--- -- that maps to this handler in the handlers map.
--- data Handler = forall t. H (t -> System ())
+-- | A handler is a function from some type to a System execution.
+-- The type of the function argument is given by the type rep of the event key
+-- that maps to this handler in the handlers map.
+data Handler = forall t. H (t -> IO ())
 
 registerHandler :: ∀ t. Event t -> (t -> System ()) -> Core ()
 registerHandler evt f = Core \(mq, href) -> do
-  ch <- newChan @t
-
-  _ <- forkIO $
-    let loop = do
-          v <- readChan ch
-          interpSystem (f v) `unCore` (mq, href)
-     in loop
-
   let ek = EK evt
-      h  = Some ch
+      h  = H $ (`unCore` (mq, href)) . interpSystem <$> f
   modifyIORef' href (M.insertWith (<>) ek [h])
 
 queueMessage :: Event t -> t -> Core ()
@@ -110,3 +97,36 @@ type MsgQueue = Chan Msg
 
 data Msg = forall t. Msg (Event t) t
 
+-- | An event is its own key, but the type is preserved in the type-rep field only.
+data EventKey = forall t. EK (Event t)
+instance Eq EventKey where
+  (==) (EK a) (EK b)
+    | Message r1 <- a
+    , Message r2 <- b
+    = SomeTypeRep r1 == SomeTypeRep r2
+    | otherwise
+    = a.name == b.name && SomeTypeRep a.argTy == SomeTypeRep b.argTy
+
+instance Ord EventKey where
+  compare (EK a) (EK b)
+    | Message r1 <- a
+    , Message r2 <- b
+    = SomeTypeRep r1 `compare` SomeTypeRep r2
+    | otherwise
+    = a.name `compare` b.name <> SomeTypeRep a.argTy `compare` SomeTypeRep b.argTy
+
+--------------------------------------------------------------------------------
+
+-- registerHandler :: ∀ t. Event t -> (t -> System ()) -> Core ()
+-- registerHandler evt f = Core \(mq, href) -> do
+--   ch <- newChan @t
+
+--   _ <- forkIO $
+--     let loop = do
+--           v <- readChan ch
+--           interpSystem (f v) `unCore` (mq, href)
+--      in loop
+
+--   let ek = EK evt
+--       h  = Some ch
+--   modifyIORef' href (M.insertWith (<>) ek [h])
