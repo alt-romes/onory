@@ -4,14 +4,22 @@ module Main where
 -- import System.Spec.Interpret
 import System.Spec
 
+default (Int)
+
 main :: IO ()
 main = do
   putStrLn "Hello, System!"
 
 type Node = Host
 
+--------------------------------------------------------------------------------
+-- Interface
+
 neighbourUp   = indication @Node "neighbourUp"
 neighbourDown = indication @Node "neighbourDown"
+
+--------------------------------------------------------------------------------
+-- Configuration
 
 data HyParViewConf =
   HPVC
@@ -25,30 +33,36 @@ data HyParViewConf =
     , shuffleTtl :: Int -- The ttl for shuffle messages.
     }
 
--- Based on https://github.com/alt-romes/projeto-asd/blob/master/pseudo-code/HyParView.c#L89
-hyParView :: HyParViewConf
-          -> Host -- ^ The contact node
-          -> System ()
+--------------------------------------------------------------------------------
+-- Protocol
+
+-- Paper: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
+-- Pseudo code: https://github.com/alt-romes/projeto-asd/blob/master/pseudo-code/HyParView.c#L89
 hyParView HPVC{..} contactNode = do
   myself <- self
+
+--------------------------------------------------------------------------------
+-- State
 
   pending     <- new Set -- Set of pending nodes
   activeView  <- new Set -- Set of nodes in the active view
   passiveView <- new Set -- Set of nodes in the passive view
 
-  {-= Init =-}
+--------------------------------------------------------------------------------
+-- Init
+
   pending += contactNode
   trigger send JoinMessage{ from=myself, to=contactNode, ttl=actRWL}
-  -- setup periodic timer ShuffleTimer(shuffleTimer)
+  setup periodic timer ShuffleTimer{time=shuffleTimer}
   
-  {-= Procedures =-}
-  let
+--------------------------------------------------------------------------------
+-- View manipulation
 
-    {-= View manipulation primitives =-}
-    addNodeActiveView(node::Host) = do
+  let
+    addNodeActiveView(node) = do
       when (node != self && node `notin` activeView) do
 
-        when ( isActiveViewFull() ) do
+        when isActiveViewFull do
           -- Drop random element from active view
           rn <- random(activeView)
           trigger send DisconnectMessage{ from=myself, to=rn }
@@ -63,30 +77,28 @@ hyParView HPVC{..} contactNode = do
         if activeView `contains` node then do
           activeView -= node
           trigger neighbourDown node
-          return True
+          return true
         else
-          return False
+          return false
 
     addNodePassiveView(node) = do
       when (node != myself && node `notin` activeView
             && not (passiveView `contains` node)) do
-        when ( isPassiveViewFull() ) do
+        when isPassiveViewFull do
           n <- random(passiveView)
           passiveView -= n
 
         passiveView += node
 
-    isActiveViewFull() = activeViewSize() >= maxSizeActiveView
-    isPassiveViewFull() = size passiveView >= maxSizePassiveView
+    isActiveViewFull = activeViewSize >= maxSizeActiveView
+    isPassiveViewFull = size passiveView >= maxSizePassiveView
 
     -- The active view size also counts with pending nodes
-    activeViewSize() = do
-      s1 <- size activeView
-      s2 <- size pending
-      return (s1 + s2)
-      
+    activeViewSize = size activeView + size pending
 
-  {-= Handlers =-}
+--------------------------------------------------------------------------------
+-- Handlers
+
   upon receive \JoinMessage{from=newNode, ttl} -> do
     call addNodeActiveView(newNode)
     trigger send JoinReplyMessage{ to=newNode, from=myself }
@@ -100,7 +112,7 @@ hyParView HPVC{..} contactNode = do
     call addNodeActiveView(from)
 
   upon receive \ForwardJoinMessage{from=sender, joined=newNode, ttl} -> do
-    if ttl == (0::Int) || activeViewSize() == (1::Int) then -- this is kind of annoying...
+    if ttl == (0 :: Int) || activeViewSize == (1 :: Int) then -- this is kind of annoying...
       when (newNode `notin` pending && newNode `notin` activeView) do
         pending += newNode
         trigger send NeighbourMessage{from=myself, to=newNode, priority=true}
@@ -109,11 +121,12 @@ hyParView HPVC{..} contactNode = do
         call addNodePassiveView(newNode)
 
         randomNode <- randomWith(activeView, \n -> n != sender && n != newNode)
+        ttl <- ttl - (1 :: Int)
         trigger send ForwardJoinMessage{to=randomNode, from=myself,
-                                        joined=newNode, ttl=ttl-1}
+                                        joined=newNode, ttl} -- we can't write ttl=ttl-1 directly here, because - returns "system"... bummer
 
   upon receive \NeighbourMessage{from=sender, priority} -> do
-    addToActive <- priority && isActiveViewFull()
+    addToActive <- priority && isActiveViewFull
 
     when addToActive do
       call addNodeActiveView(sender)
@@ -139,21 +152,49 @@ hyParView HPVC{..} contactNode = do
   let
     -- Active View Management
     promoteRandomNodeFromPassiveToActiveView() = do
-      when ( size passiveView > (0 :: Int) && not(isActiveViewFull()) ) do
+      when ( size passiveView > (0 :: Int) && not isActiveViewFull ) do
         node <- randomWith(passiveView, \n -> n `notin` pending)
         pending += node
 
-        priority <- activeViewSize() <= (1 :: Int)
+        priority <- activeViewSize <= (1 :: Int)
         trigger send NeighbourMessage{from=myself, to=node, priority}
 
     -- Passive View Management
     integrateReceivedNodesToPassiveView(receivedNodes, sentNodes) = do
-      -- ToDo
+
+      -- Something here is wrong because filtered is unused...
+      filtered <- filter (\n ->
+                      n != self &&
+                        n `notin` activeView &&
+                        n `notin` passiveView)
+                    receivedNodes
+
+      nodesToRemove <- size passiveView - maxSizePassiveView + size receivedNodes
+      -- ToDo:!!! the rest of this method
       return ()
 
-    -- ToDo: from Upon Timer ShuffleTimer
+  upon timer \ShuffleTimer{} -> do
+    when (size activeView > (0 :: Int)) do
+      activeViewNodes :: Set Node <- randomSubset(activeView, shuffleKa)
+      passiveViewNodes :: Set Node <- randomSubset(passiveView, shuffleKp)
 
-  return ()
+      host <- random(activeView)
+
+      nodesToSend <- activeViewNodes `union` passiveViewNodes
+
+      trigger send ShuffleMessage{to=host, from=myself, ttl=shuffleTtl, nodes=nodesToSend}
+
+  -- to:do: why did we have original sender vs sender??
+  upon receive \ShuffleMessage{from=sender, nodes, ttl} -> do
+    ttl <- ttl - (1 :: Int)
+    if (ttl > (0::Int) && activeViewSize > (1::Int)) then do
+       host <- randomWith(activeView, \h -> h != sender)
+       trigger send ShuffleMessage{to=host, from=sender, nodes, ttl}
+    else do
+      replyNodes <- randomSubset(passiveView, size nodes)
+      -- send the received nodes in the reply
+      trigger send ShuffleReplyMessage{to=sender, receivedNodes=nodes, replyNodes}
+      call integrateReceivedNodesToPassiveView(nodes, replyNodes)
 
 --------------------------------------------------------------------------------
 -- Messages
@@ -164,11 +205,14 @@ data JoinReplyMessage   = JoinReplyMessage { from :: Host, to :: Host }
 data DisconnectMessage  = DisconnectMessage { from :: Host, to :: Host }
 data NeighbourMessage   = NeighbourMessage { from :: Host, to :: Host, priority :: Bool }
 data NeighbourReplyMessage = NeighbourReplyMessage { from :: Host, to :: Host, accepted :: Bool }
+data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, nodes :: Set Node}
+data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Node, replyNodes :: Set Node}
+data ShuffleTimer = ShuffleTimer{ time :: Int }
 
 --------------------------------------------------------------------------------
 -- Helpers
 
-randomWith :: Container a => (a, Elem a -> System Bool) -> System (Elem a)
+randomSubset = undefined
 randomWith (container, cond) = do
     n <- random(container)
     if cond(n) then
