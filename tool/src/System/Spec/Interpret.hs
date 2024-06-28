@@ -3,6 +3,7 @@ module System.Spec.Interpret
   ( runCore, interpSystem
   ) where
 
+import GHC.Records
 import Data.IORef
 import Control.Monad.Reader
 import Type.Reflection
@@ -30,8 +31,9 @@ runCore :: Core a -> IO MsgQueue
 runCore c = do
   hs <- newIORef M.empty
   mq <- newChan
-  _ <- forkIO $ worker `unCore` (mq, hs)
-  _ <- c `unCore` (mq, hs)
+  let coreData = CoreData mq hs
+  _ <- forkIO $ worker `unCore` coreData
+  _ <- c `unCore` coreData
   return mq
 
 interpSystem :: System a -> Core ()
@@ -46,16 +48,18 @@ interpSystem sys = void do
         ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b) >> n
         GetState (Mutable a) n -> liftIO (readIORef a) >>= n
         GetRandom bnds n -> liftIO (randomRIO bnds) >>= n
+        SetupTimer tt evt timer n -> startTimer tt evt timer >> n
+        CancelTimer evt n -> stopTimer evt >> n
 
   iterM runF sys
 
 worker :: Core ()
-worker = Core \(mq, href) -> do
-  let loop = unCore worker (mq, href)
-  handlers <- readIORef href
+worker = Core \cd -> do
+  let loop = unCore worker cd
+  handlers <- readIORef cd.handlers
 
   -- Waits for message
-  Msg e t <- readChan mq
+  Msg e t <- readChan cd.msgQueue
 
   case M.lookup (EK e) handlers of
     Nothing -> {- message lost -} loop
@@ -65,7 +69,7 @@ worker = Core \(mq, href) -> do
       loop
 
 --------------------------------------------------------------------------------
--- * Handlers
+-- * Impl
 
 -- | Map events to their handlers
 type Handlers = IORef (Map EventKey [Handler])
@@ -79,13 +83,47 @@ type Handlers = IORef (Map EventKey [Handler])
 data Handler = forall t. H (t -> IO ())
 
 registerHandler :: ∀ t a. Event t -> (t -> System a) -> Core ()
-registerHandler evt f = Core \(mq, href) -> do
+registerHandler evt f = Core \cd -> do
   let ek = EK evt
-      h  = H $ (`unCore` (mq, href)) . interpSystem <$> f
-  modifyIORef' href (M.insertWith (<>) ek [h])
+      h  = H $ (`unCore` cd) . interpSystem <$> f
+  modifyIORef' cd.handlers (M.insertWith (<>) ek [h])
 
 queueMessage :: Event t -> t -> Core ()
-queueMessage evt t = Core \(q, _) -> writeChan q (Msg evt t)
+queueMessage evt t = Core \cd -> writeChan cd.msgQueue (Msg evt t)
+
+-- | Start a timer.
+--
+-- NB: We create a handler automatically for a special event called stop timer
+-- This handler will kill the thread assign to the relevant timer.
+startTimer :: HasField "time" timer Int => TimerType timer -> Event timer -> timer -> Core ()
+startTimer tt evt@(Timer tr) timer = Core \cd -> do
+  let registerCancelTimer tid = modifyIORef' cd.handlers (M.insertWith (<>) (EK (StopTimer tr)) [cancelTimerThread tid])
+  case tt of
+    OneShotTimer -> do
+      tid <- forkIO $ do
+        threadDelay timer.time
+        queueMessage evt timer `unCore` cd
+      registerCancelTimer tid
+    PeriodicTimer -> do
+      tid <- forkIO $ do
+        -- Delay until first occurrence
+        threadDelay timer.time
+        queueMessage evt timer `unCore` cd
+        -- Periodically repeat
+        let loop = do
+              threadDelay timer.repeat
+              queueMessage evt timer `unCore` cd
+              loop
+         in loop
+      registerCancelTimer tid
+startTimer _ _ _ = error "Setup timer should only be called on a timer event"
+
+stopTimer :: Event timer -> Core ()
+stopTimer (Timer t) = queueMessage (StopTimer t) (error "Upon StopTimer event should not be possible to define")
+stopTimer _ = error "Cancel timer should only be called on timer events"
+
+cancelTimerThread :: ThreadId -> Handler
+cancelTimerThread tid = H $ \_ -> killThread tid
 
 --------------------------------------------------------------------------------
 
@@ -95,8 +133,13 @@ data Msg = forall t. Msg (Event t) t
 --------------------------------------------------------------------------------
 -- * Core monad
 
-newtype Core a = Core { unCore :: (MsgQueue, Handlers) -> IO a } -- needs to be STM since the handlers run atomically...
-  deriving (Functor, Applicative, Monad, MonadIO) via (ReaderT (MsgQueue, Handlers) IO)
+newtype Core a = Core { unCore :: CoreData -> IO a } -- needs to be STM since the handlers run atomically...
+  deriving (Functor, Applicative, Monad, MonadIO) via (ReaderT CoreData IO)
+
+data CoreData = CoreData
+  { msgQueue :: MsgQueue
+  , handlers :: Handlers
+  }
 
 --------------------------------------------------------------------------------
 -- * EventKey
@@ -109,6 +152,12 @@ instance Eq EventKey where
     | Message r1 <- a
     , Message r2 <- b
     = SomeTypeRep r1 == SomeTypeRep r2
+    | Timer r1 <- a
+    , Timer r2 <- b
+    = SomeTypeRep r1 == SomeTypeRep r2
+    | StopTimer r1 <- a
+    , StopTimer r2 <- b
+    = r1 == r2
     | otherwise
     = a.name == b.name && SomeTypeRep a.argTy == SomeTypeRep b.argTy
 

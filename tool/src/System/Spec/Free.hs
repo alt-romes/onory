@@ -43,14 +43,18 @@ data SystemF next where
   SetupTimer
     :: HasField "time" timer Int => TimerType timer -> Event timer -> timer -> next -> SystemF next
 
+  CancelTimer
+    :: Event timer -> next -> SystemF next
+
 --------------------------------------------------------------------------------
 -- Core datatypes
 
-data Event evt_t
+data Event (evt_t :: Type)
   = Request    { name :: Name, argTy :: TypeRep evt_t }
   | Indication { name :: Name, argTy :: TypeRep evt_t }
   | Message    { argTy :: TypeRep evt_t }
   | Timer      { argTy :: TypeRep evt_t }
+  | StopTimer  { argTy :: TypeRep evt_t }
   deriving (Show, Eq, Ord)
 
 newtype Mutable a = Mutable (IORef a)
@@ -75,6 +79,7 @@ instance Functor SystemF where
     GetState a n -> GetState a (f . n)
     GetRandom r n -> GetRandom r (f . n)
     SetupTimer tt evt timer next -> SetupTimer tt evt timer (f next)
+    CancelTimer evt n -> CancelTimer evt (f n)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)
