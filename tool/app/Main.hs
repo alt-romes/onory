@@ -64,7 +64,7 @@ hyParView HPVC{..} contactNode = do
 
         when isActiveViewFull do
           -- Drop random element from active view
-          rn <- random(activeView)
+          rn <- randomElem(activeView)
           trigger send DisconnectMessage{ from=myself, to=rn }
           call removeNodeActiveView(rn)
           passiveView += rn
@@ -85,7 +85,7 @@ hyParView HPVC{..} contactNode = do
       when (node != myself && node `notin` activeView
             && not (passiveView `contains` node)) do
         when isPassiveViewFull do
-          n <- random(passiveView)
+          n <- randomElem(passiveView)
           passiveView -= n
 
         passiveView += node
@@ -120,7 +120,9 @@ hyParView HPVC{..} contactNode = do
       when (ttl == passRWL) do
         call addNodePassiveView(newNode)
 
-        randomNode <- randomWith(activeView, \n -> n != sender && n != newNode)
+        randomNode <-
+          activeView `randomElemWith`
+            \n -> n != sender && n != newNode
         ttl <- ttl - (1 :: Int)
         trigger send ForwardJoinMessage{to=randomNode, from=myself,
                                         joined=newNode, ttl} -- we can't write ttl=ttl-1 directly here, because - returns "system"... bummer
@@ -153,7 +155,7 @@ hyParView HPVC{..} contactNode = do
     -- Active View Management
     promoteRandomNodeFromPassiveToActiveView() = do
       when ( size passiveView > (0 :: Int) && not isActiveViewFull ) do
-        node <- randomWith(passiveView, \n -> n `notin` pending)
+        node <- passiveView `randomElemWith` \n -> n `notin` pending
         pending += node
 
         priority <- activeViewSize <= (1 :: Int)
@@ -178,7 +180,7 @@ hyParView HPVC{..} contactNode = do
       activeViewNodes :: Set Node <- randomSubset(activeView, shuffleKa)
       passiveViewNodes :: Set Node <- randomSubset(passiveView, shuffleKp)
 
-      host <- random(activeView)
+      host <- randomElem(activeView)
 
       nodesToSend <- activeViewNodes `union` passiveViewNodes
 
@@ -188,7 +190,7 @@ hyParView HPVC{..} contactNode = do
   upon receive \ShuffleMessage{from=sender, nodes, ttl} -> do
     ttl <- ttl - (1 :: Int)
     if (ttl > (0::Int) && activeViewSize > (1::Int)) then do
-       host <- randomWith(activeView, \h -> h != sender)
+       host <- activeView `randomElemWith` \h -> h != sender
        trigger send ShuffleMessage{to=host, from=sender, nodes, ttl}
     else do
       replyNodes <- randomSubset(passiveView, size nodes)
@@ -212,10 +214,3 @@ data ShuffleTimer = ShuffleTimer{ time :: Int }
 --------------------------------------------------------------------------------
 -- Helpers
 
-randomSubset = undefined
-randomWith (container, cond) = do
-    n <- random(container)
-    if cond(n) then
-      return n
-    else
-      randomWith(container, cond)

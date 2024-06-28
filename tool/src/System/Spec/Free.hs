@@ -5,6 +5,7 @@ import Control.Concurrent.STM
 import Data.IORef
 import Data.Kind
 import Type.Reflection
+import System.Random (Random)
 
 import Control.Monad.Free
 import Control.Monad.Free.TH
@@ -34,6 +35,9 @@ data SystemF next where
 
   GetState
     :: Mutable a -> (a -> next) -> SystemF next
+
+  GetRandom
+    :: Random a => (a, a) -> (a -> next) -> SystemF next
 
 --------------------------------------------------------------------------------
 -- Core datatypes
@@ -65,6 +69,7 @@ instance Functor SystemF where
     MkNew t c -> MkNew t (f . c)
     ModifyState a b n -> ModifyState a b (f n)
     GetState a n -> GetState a (f . n)
+    GetRandom r n -> GetRandom r (f . n)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)
