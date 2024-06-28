@@ -46,6 +46,9 @@ data SystemF next where
   CancelTimer
     :: Event timer -> next -> SystemF next
 
+  TraceStr
+    :: Int {- verbosity -} -> String -> next -> SystemF next
+
 --------------------------------------------------------------------------------
 -- Core datatypes
 
@@ -80,6 +83,7 @@ instance Functor SystemF where
     GetRandom r n -> GetRandom r (f . n)
     SetupTimer tt evt timer next -> SetupTimer tt evt timer (f next)
     CancelTimer evt n -> CancelTimer evt (f n)
+    TraceStr i s n -> TraceStr i s (f n)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)

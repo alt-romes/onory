@@ -1,8 +1,9 @@
-{-# LANGUAGE OverloadedRecordDot, DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot, DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase, MagicHash #-}
 module System.Spec.Interpret
   ( runCore, interpSystem
   ) where
 
+import GHC.Exts (dataToTag#, Int(I#))
 import GHC.Records
 import Data.IORef
 import Control.Monad.Reader
@@ -20,6 +21,7 @@ import Control.Concurrent.STM
 import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
+import Data.Time.Clock (getCurrentTime)
 
 --------------------------------------------------------------------------------
 -- * Interpreters
@@ -27,14 +29,16 @@ import System.Random (randomRIO)
 -- | Run a stack of protocols together
 -- runTower :: [Protocol] -> IO ()
 
-runCore :: Core a -> IO MsgQueue
-runCore c = do
+runCore :: Verbosity -> Core a -> IO MsgQueue
+runCore v c = do
   hs <- newIORef M.empty
   mq <- newChan
-  let coreData = CoreData mq hs
+  let coreData = CoreData mq hs v
   _ <- forkIO $ worker `unCore` coreData
   _ <- c `unCore` coreData
   return mq
+
+type Verbosity = Int
 
 interpSystem :: System a -> Core ()
 interpSystem sys = void do
@@ -50,6 +54,12 @@ interpSystem sys = void do
         GetRandom bnds n -> liftIO (randomRIO bnds) >>= n
         SetupTimer tt evt timer n -> startTimer tt evt timer >> n
         CancelTimer evt n -> stopTimer evt >> n
+        TraceStr v str n -> do
+          verb <- asks verbosity
+          time <- liftIO getCurrentTime
+          if v <= verb
+            then liftIO (putStrLn (show time ++ ": " ++ str)) >> n
+            else n
 
   iterM runF sys
 
@@ -101,17 +111,17 @@ startTimer tt evt@(Timer tr) timer = Core \cd -> do
   case tt of
     OneShotTimer -> do
       tid <- forkIO $ do
-        threadDelay timer.time
+        threadDelay (timer.time * 1000)
         queueMessage evt timer `unCore` cd
       registerCancelTimer tid
     PeriodicTimer -> do
       tid <- forkIO $ do
         -- Delay until first occurrence
-        threadDelay timer.time
+        threadDelay (timer.time * 1000)
         queueMessage evt timer `unCore` cd
         -- Periodically repeat
         let loop = do
-              threadDelay timer.repeat
+              threadDelay (timer.repeat * 1000)
               queueMessage evt timer `unCore` cd
               loop
          in loop
@@ -134,11 +144,12 @@ data Msg = forall t. Msg (Event t) t
 -- * Core monad
 
 newtype Core a = Core { unCore :: CoreData -> IO a } -- needs to be STM since the handlers run atomically...
-  deriving (Functor, Applicative, Monad, MonadIO) via (ReaderT CoreData IO)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader CoreData) via (ReaderT CoreData IO)
 
 data CoreData = CoreData
   { msgQueue :: MsgQueue
   , handlers :: Handlers
+  , verbosity :: Verbosity
   }
 
 --------------------------------------------------------------------------------
@@ -148,24 +159,22 @@ data CoreData = CoreData
 data EventKey = forall t. EK (Event t)
 
 instance Eq EventKey where
-  (==) (EK a) (EK b)
-    | Message r1 <- a
-    , Message r2 <- b
-    = SomeTypeRep r1 == SomeTypeRep r2
-    | Timer r1 <- a
-    , Timer r2 <- b
-    = SomeTypeRep r1 == SomeTypeRep r2
-    | StopTimer r1 <- a
-    , StopTimer r2 <- b
-    = r1 == r2
-    | otherwise
-    = a.name == b.name && SomeTypeRep a.argTy == SomeTypeRep b.argTy
+  (==) (EK a) (EK b) =
+    case (a, b) of
+      (Message r1, Message r2) -> SomeTypeRep r1 == SomeTypeRep r2
+      (Timer r1, Timer r2) -> SomeTypeRep r1 == SomeTypeRep r2
+      (StopTimer r1, StopTimer r2) -> SomeTypeRep r1 == SomeTypeRep r2
+      (Request n1 r1, Request n2 r2) -> n1 == n2 && SomeTypeRep r1 == SomeTypeRep r2
+      (Indication n1 r1, Indication n2 r2) -> n1 == n2 && SomeTypeRep r1 == SomeTypeRep r2
+      (_, _) -> False
 
 instance Ord EventKey where
-  compare (EK a) (EK b)
-    | Message r1 <- a
-    , Message r2 <- b
-    = SomeTypeRep r1 `compare` SomeTypeRep r2
-    | otherwise
-    = a.name `compare` b.name <> SomeTypeRep a.argTy `compare` SomeTypeRep b.argTy
+  compare (EK a) (EK b) =
+    case (a, b) of
+      (Message r1, Message r2) -> SomeTypeRep r1 `compare` SomeTypeRep r2
+      (Timer r1, Timer r2) -> SomeTypeRep r1 `compare` SomeTypeRep r2
+      (StopTimer r1, StopTimer r2) -> SomeTypeRep r1 `compare` SomeTypeRep r2
+      (Request n1 r1, Request n2 r2) -> n1 `compare` n2 <> SomeTypeRep r1 `compare` SomeTypeRep r2
+      (Indication n1 r1, Indication n2 r2) -> n1 `compare` n2 <> SomeTypeRep r1 `compare` SomeTypeRep r2
+      (_, _) -> I# (dataToTag# a) `compare` I# (dataToTag# b)
 

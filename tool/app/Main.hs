@@ -4,14 +4,15 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main where
 
--- import System.Spec.Interpret
+import System.Spec.Interpret
 import System.Spec
 
 default (Int)
 
 main :: IO ()
 main = do
-  putStrLn "Hello, System!"
+  runCore 1 (interpSystem $ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost")
+  return ()
 
 type Node = Host
 
@@ -42,7 +43,9 @@ data HyParViewConf =
 -- Paper: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 -- Pseudo code: https://github.com/alt-romes/projeto-asd/blob/master/pseudo-code/HyParView.c#L89
 hyParView HPVC{..} contactNode = do
+  puts "Starting HyParView..."
   myself <- self
+  puts ("I am " ++ show myself)
 
 --------------------------------------------------------------------------------
 -- State

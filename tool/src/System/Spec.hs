@@ -28,11 +28,12 @@ import System.Random (Random)
 import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
                       , all, any, filter
                       , (+), (-), (*), (/), mod, div, abs
+                      , print
                       )
 import qualified Prelude as P
 
 import System.Spec.Free
-import System.Spec.Interpret
+-- import System.Spec.Interpret
 
 --------------------------------------------------------------------------------
 -- * Main interface
@@ -77,6 +78,9 @@ oneshot  = OneShotTimer
 
 random :: Random a => (a, a) -> System a
 random = getRandom
+
+logStr :: Int -> String -> System ()
+logStr = traceStr
 
 ok :: System ()
 ok = pure ()
@@ -370,6 +374,7 @@ infix 4 !=
 infixl 6 +
 infixl 6 -
 infixl 7 /
+infixl 9 \\
 
 --------------------------------------------------------------------------------
 -- Combinators
@@ -417,6 +422,18 @@ randomSubset (c, ln) = do
       go acc' (i P.- 1)
   e <- empty @(ImmutableCR a)
   go e (min s n)
+
+--------------------------------------------------------------------------------
+-- * Logging
+
+print :: Show a => a -> System ()
+print = logStr 0 . show
+
+puts :: String -> System ()
+puts = logStr 0
+
+trace :: String -> System ()
+trace = logStr 1
 
 --------------------------------------------------------------------------------
 -- * Utilities
