@@ -33,7 +33,6 @@ import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
 import qualified Prelude as P
 
 import System.Spec.Free
--- import System.Spec.Interpret
 
 --------------------------------------------------------------------------------
 -- * Main interface
@@ -75,6 +74,9 @@ periodic = PeriodicTimer
 
 oneshot :: TimerType timer
 oneshot  = OneShotTimer
+
+cancel :: Event timer -> System ()
+cancel = cancelTimer
 
 random :: Random a => (a, a) -> System a
 random = getRandom

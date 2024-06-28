@@ -11,7 +11,7 @@ default (Int)
 
 main :: IO ()
 main = do
-  (s, _) <- runCore 1 (interpSystem $ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost")
+  (s, _) <- runCore 3 (interpSystem $ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost")
   wait s
 
 type Node = Host
@@ -181,7 +181,8 @@ hyParView HPVC{..} contactNode = do
       -- ToDo:!!! the rest of this method
       return ()
 
-  upon timer \ShuffleTimer{} -> do
+  upon timer \ShuffleTimer{time} -> do
+
     when (size activeView > (0 :: Int)) do
       activeViewNodes :: Set Node <- randomSubset(activeView, shuffleKa)
       passiveViewNodes :: Set Node <- randomSubset(passiveView, shuffleKp)

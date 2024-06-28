@@ -16,13 +16,14 @@ import Control.Monad.Free
 import Data.Map (Map)
 import qualified Data.Map as M
 
-import System.Spec.Free
 import Control.Concurrent.STM
 import Control.Concurrent.MVar
 import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
 import Data.Time.Clock (getCurrentTime)
+
+import System.Spec.Free
 
 --------------------------------------------------------------------------------
 -- * Interpreters
@@ -45,15 +46,26 @@ interpSystem sys = void do
 
   let runF :: SystemF (Core a) -> Core a
       runF = \case
-        UponEvent x impl next -> registerHandler x impl >> next
-        TriggerEvent x e next -> queueMessage x e >> next
+        UponEvent x impl next -> do
+          let tr = traceStr 3 ("Handling " ++ show x)
+          registerHandler x (\a -> tr >> impl a) >> next
+        TriggerEvent x e next -> do
+          interpSystem $ traceStr 3 ("Triggering " ++ show x) -- we could automatically show the argument if we required `Show`.
+          queueMessage x e
+          next
         GetSelf c -> c "localhost"
         MkNew i c -> c . Mutable =<< liftIO (newIORef i)
         ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b) >> n
         GetState (Mutable a) n -> liftIO (readIORef a) >>= n
         GetRandom bnds n -> liftIO (randomRIO bnds) >>= n
-        SetupTimer tt evt timer n -> startTimer tt evt timer >> n
-        CancelTimer evt n -> stopTimer evt >> n
+        SetupTimer tt evt timer n -> do
+          interpSystem $ traceStr 3 ("Setting up " ++ show evt)
+          startTimer tt evt timer
+          n
+        CancelTimer evt n -> do
+          interpSystem $ traceStr 3 ("Handling " ++ show evt)
+          stopTimer evt
+          n
         TraceStr v str n -> do
           verb <- asks verbosity
           time <- liftIO getCurrentTime

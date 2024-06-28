@@ -58,7 +58,7 @@ data Event (evt_t :: Type)
   | Message    { argTy :: TypeRep evt_t }
   | Timer      { argTy :: TypeRep evt_t }
   | StopTimer  { argTy :: TypeRep evt_t }
-  deriving (Show, Eq, Ord)
+  deriving (Eq, Ord)
 
 newtype Mutable a = Mutable (IORef a)
 
@@ -68,6 +68,14 @@ type Host = String
 data TimerType timer where
   PeriodicTimer :: HasField "repeat" timer Int => TimerType timer
   OneShotTimer  :: TimerType timer
+
+instance Show (Event t) where
+  show e = case e of
+    Request{name, argTy}    -> "request "      ++ show name ++ ":" ++ show argTy
+    Indication{name, argTy} -> "indication "   ++ show name ++ ":" ++ show argTy
+    Message{argTy}          -> "message "      ++ show argTy
+    Timer{argTy}            -> "timer "        ++ show argTy
+    StopTimer{argTy}        -> "cancel timer " ++ show argTy
 
 --------------------------------------------------------------------------------
 
