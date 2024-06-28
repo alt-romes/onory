@@ -26,7 +26,7 @@ import Data.Time.Clock (getCurrentTime)
 import System.Spec.Free
 
 --------------------------------------------------------------------------------
--- * Interpreters
+-- * Interpreter
 
 -- | Run a stack of protocols together
 -- runTower :: [Protocol] -> IO ()
@@ -90,26 +90,8 @@ worker = Core \cd -> do
       forM_ hs \(H h) -> unsafeCoerce h t
       loop
 
-newtype Sync = Sync (MVar ())
-
 wait :: Sync -> IO ()
 wait (Sync m) = readMVar m
-
-type Verbosity = Int
-
---------------------------------------------------------------------------------
--- * Impl
-
--- | Map events to their handlers
-type Handlers = IORef (Map EventKey [Handler])
-
--- -- A handler is a thread reading @t@s from a channel.
--- type Handler = Chan
-
--- | A handler is a function from some type to a System execution.
--- The type of the function argument is given by the type rep of the event key
--- that maps to this handler in the handlers map.
-data Handler = forall t. H (t -> IO ())
 
 registerHandler :: ∀ t a. Event t -> (t -> System a) -> Core ()
 registerHandler evt f = Core \cd -> do
@@ -155,12 +137,21 @@ cancelTimerThread :: ThreadId -> Handler
 cancelTimerThread tid = H $ \_ -> killThread tid
 
 --------------------------------------------------------------------------------
+-- * Core datatypes
+
+-- | Map events to their handlers
+type Handlers = IORef (Map EventKey [Handler])
+
+-- -- A handler is a thread reading @t@s from a channel.
+-- type Handler = Chan
+
+-- | A handler is a function from some type to a System execution.
+-- The type of the function argument is given by the type rep of the event key
+-- that maps to this handler in the handlers map.
+data Handler = forall t. H (t -> IO ())
 
 type MsgQueue = Chan Msg
 data Msg = forall t. Msg (Event t) t
-
---------------------------------------------------------------------------------
--- * Core monad
 
 newtype Core a = Core { unCore :: CoreData -> IO a } -- needs to be STM since the handlers run atomically...
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader CoreData) via (ReaderT CoreData IO)
@@ -171,8 +162,7 @@ data CoreData = CoreData
   , verbosity :: Verbosity
   }
 
---------------------------------------------------------------------------------
--- * EventKey
+newtype Sync = Sync (MVar ())
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
 data EventKey = forall t. EK (Event t)

@@ -47,7 +47,7 @@ data SystemF next where
     :: Event timer -> next -> SystemF next
 
   TraceStr
-    :: Int {- verbosity -} -> String -> next -> SystemF next
+    :: Verbosity -> String -> next -> SystemF next
 
 --------------------------------------------------------------------------------
 -- Core datatypes
@@ -64,6 +64,7 @@ newtype Mutable a = Mutable (IORef a)
 
 type Name = String
 type Host = String
+type Verbosity = Int
 
 data TimerType timer where
   PeriodicTimer :: HasField "repeat" timer Int => TimerType timer
