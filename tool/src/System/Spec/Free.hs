@@ -18,7 +18,7 @@ type System = Free SystemF
 data SystemF next where
 
   UponEvent
-    :: Event et -> (et -> System ()) -> next -> SystemF next
+    :: Event et -> (et -> System a) -> next -> SystemF next
 
   TriggerEvent
     :: Event et -> et -> next -> SystemF next

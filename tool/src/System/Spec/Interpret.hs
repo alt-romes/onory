@@ -78,7 +78,7 @@ type Handlers = IORef (Map EventKey [Handler])
 -- that maps to this handler in the handlers map.
 data Handler = forall t. H (t -> IO ())
 
-registerHandler :: ∀ t. Event t -> (t -> System ()) -> Core ()
+registerHandler :: ∀ t a. Event t -> (t -> System a) -> Core ()
 registerHandler evt f = Core \(mq, href) -> do
   let ek = EK evt
       h  = H $ (`unCore` (mq, href)) . interpSystem <$> f

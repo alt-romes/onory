@@ -46,7 +46,7 @@ self = getSelf
 new :: a -> System (Mutable a)
 new = mkNew
 
-upon :: Event n -> (n -> System ()) -> System ()
+upon :: Event n -> (n -> System a) -> System ()
 upon = uponEvent
 
 trigger :: Event n -> n -> System ()
@@ -121,10 +121,9 @@ call = id
 class Container a where
   type Elem a :: Type
   type Key  a :: Type
-  type AR   a :: Type
   foreach :: a -> (Elem a -> System b) -> System ()
-  (+=) :: a -> Elem a -> AR a -- ToDo: Make me @a@
-  (-=) :: a -> Key a  -> AR a
+  (+=) :: a -> Elem a -> System a
+  (-=) :: a -> Key a  -> System a
   size :: LiftS b a => b -> System Int
   contains :: a -> Key a -> System Bool
   notin    :: Key a -> a -> System Bool
@@ -137,10 +136,9 @@ class Container a where
 instance P.Ord a => Container (Set a) where
   type Elem (Set a) = a
   type Key  (Set a) = a
-  type AR   (Set a) = Set a
   foreach = forM_ . S.toList
-  (+=) = flip S.insert
-  (-=) = flip S.delete
+  (+=) = fmap pure . flip S.insert
+  (-=) = fmap pure . flip S.delete
   size = fmap S.size . liftS
   contains = fmap pure . flip S.member
   union x y = S.union <$> liftS x <*> liftS y
@@ -160,10 +158,9 @@ instance P.Ord a => Container (Set a) where
 instance P.Ord k => Container (Map k a) where
   type Elem (Map k a) = (k, a)
   type Key  (Map k a) = k
-  type AR   (Map k a) = Map k a
   foreach = forM_ . M.toList
-  (+=) = flip $ uncurry M.insert
-  (-=) = flip M.delete
+  (+=) c x = pure $ uncurry M.insert x c
+  (-=) c x = pure $ M.delete x c
   size = fmap M.size . liftS
   contains = fmap pure . flip M.member
   union x y = M.union <$> liftS x <*> liftS y
@@ -179,15 +176,22 @@ instance P.Ord k => Container (Map k a) where
   {-# INLINE union #-}
   {-# INLINE filter #-}
 
-instance (Container a, AR a ~ a) => Container (Mutable a) where
+instance Container a => Container (Mutable a) where
   type Elem (Mutable a) = Elem a
   type Key  (Mutable a) = Key a
-  type AR   (Mutable a) = System ()
   foreach ref f = do
     c <- get ref
     foreach c f
-  (+=) ref x = modify ref (+= x)
-  (-=) ref x = modify ref (-= x)
+  (+=) ref x = do
+    c <- get ref
+    c' <- c += x
+    ref := c'
+    return ref
+  (-=) ref x = do
+    c <- get ref
+    c' <- c -= x
+    ref := c'
+    return ref
   size = size <=< get <=< liftS
   contains ref k = get ref >>= (`contains` k)
 
