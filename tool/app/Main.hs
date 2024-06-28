@@ -11,8 +11,8 @@ default (Int)
 
 main :: IO ()
 main = do
-  runCore 1 (interpSystem $ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost")
-  return ()
+  (s, _) <- runCore 1 (interpSystem $ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost")
+  wait s
 
 type Node = Host
 

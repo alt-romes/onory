@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedRecordDot, DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase, MagicHash #-}
 module System.Spec.Interpret
-  ( runCore, interpSystem
+  ( runCore, interpSystem, wait, Verbosity
   ) where
 
 import GHC.Exts (dataToTag#, Int(I#))
@@ -18,6 +18,7 @@ import qualified Data.Map as M
 
 import System.Spec.Free
 import Control.Concurrent.STM
+import Control.Concurrent.MVar
 import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
@@ -29,16 +30,15 @@ import Data.Time.Clock (getCurrentTime)
 -- | Run a stack of protocols together
 -- runTower :: [Protocol] -> IO ()
 
-runCore :: Verbosity -> Core a -> IO MsgQueue
+runCore :: Verbosity -> Core a -> IO (Sync, MsgQueue)
 runCore v c = do
   hs <- newIORef M.empty
   mq <- newChan
+  sync <- newEmptyMVar
   let coreData = CoreData mq hs v
-  _ <- forkIO $ worker `unCore` coreData
+  _ <- forkFinally (worker `unCore` coreData) (\_ -> putMVar sync ())
   _ <- c `unCore` coreData
-  return mq
-
-type Verbosity = Int
+  return (Sync sync, mq)
 
 interpSystem :: System a -> Core ()
 interpSystem sys = void do
@@ -77,6 +77,13 @@ worker = Core \cd -> do
       -- Run all handlers with the same message
       forM_ hs \(H h) -> unsafeCoerce h t
       loop
+
+newtype Sync = Sync (MVar ())
+
+wait :: Sync -> IO ()
+wait (Sync m) = readMVar m
+
+type Verbosity = Int
 
 --------------------------------------------------------------------------------
 -- * Impl
