@@ -19,6 +19,7 @@ import System.Spec.Free
 import Control.Concurrent.STM
 import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
+import System.Random (randomRIO)
 
 --------------------------------------------------------------------------------
 -- * Interpreters
@@ -46,6 +47,7 @@ interpSystem sys = void do
         MkNew i c -> c . Mutable =<< liftIO (newIORef i)
         ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b) >> n
         GetState (Mutable a) n -> liftIO (readIORef a) >>= n
+        GetRandom bnds n -> liftIO (randomRIO bnds) >>= n
 
   iterM runF sys
 
