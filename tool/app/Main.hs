@@ -1,4 +1,7 @@
+-- ROMES:TODO: Pass these options in the GHC wrapper automatically.
 {-# LANGUAGE RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields #-}
+{-# OPTIONS_GHC -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant bracket" #-}
 module Main where
 
 -- import System.Spec.Interpret

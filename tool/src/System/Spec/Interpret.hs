@@ -6,12 +6,11 @@ module System.Spec.Interpret
 import Data.IORef
 import Control.Monad.Reader
 import Type.Reflection
-import Data.Kind
 import Control.Monad
 import Control.Monad.Free
 
-import Data.Set (Set)
-import qualified Data.Set as S
+-- import Data.Set (Set)
+-- import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
 
@@ -31,8 +30,7 @@ runCore :: Core a -> IO MsgQueue
 runCore c = do
   hs <- newIORef M.empty
   mq <- newChan
-  forkIO $
-    worker `unCore` (mq, hs)
+  _ <- forkIO $ worker `unCore` (mq, hs)
   _ <- c `unCore` (mq, hs)
   return mq
 
