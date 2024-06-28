@@ -66,11 +66,13 @@ timer :: ∀ timer. Typeable timer => Event timer
 timer = Timer (typeRep @timer)
 
 setup :: HasField "time" timer Int {- time field in milliseconds -}
-      => TimerType -> Event timer -> timer -> System ()
-setup = undefined
+      => TimerType timer -> Event timer -> timer -> System ()
+setup = setupTimer
 
-periodic, oneshot :: TimerType
+periodic :: HasField "repeat" timer Int {- repeat every n milliseconds -} => TimerType timer
 periodic = PeriodicTimer
+
+oneshot :: TimerType timer
 oneshot  = OneShotTimer
 
 random :: Random a => (a, a) -> System a

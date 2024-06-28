@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase #-}
 module System.Spec.Free where
 
+import GHC.Records
 import Control.Concurrent.STM
 import Data.IORef
 import Data.Kind
@@ -39,6 +40,9 @@ data SystemF next where
   GetRandom
     :: Random a => (a, a) -> (a -> next) -> SystemF next
 
+  SetupTimer
+    :: HasField "time" timer Int => TimerType timer -> Event timer -> timer -> next -> SystemF next
+
 --------------------------------------------------------------------------------
 -- Core datatypes
 
@@ -54,9 +58,9 @@ newtype Mutable a = Mutable (IORef a)
 type Name = String
 type Host = String
 
-data TimerType
-  = PeriodicTimer
-  | OneShotTimer
+data TimerType timer where
+  PeriodicTimer :: HasField "repeat" timer Int => TimerType timer
+  OneShotTimer  :: TimerType timer
 
 --------------------------------------------------------------------------------
 
@@ -70,6 +74,7 @@ instance Functor SystemF where
     ModifyState a b n -> ModifyState a b (f n)
     GetState a n -> GetState a (f . n)
     GetRandom r n -> GetRandom r (f . n)
+    SetupTimer tt evt timer next -> SetupTimer tt evt timer (f next)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)

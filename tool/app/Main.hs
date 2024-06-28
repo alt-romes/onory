@@ -56,7 +56,7 @@ hyParView HPVC{..} contactNode = do
 
   pending += contactNode
   trigger send JoinMessage{ from=myself, to=contactNode, ttl=actRWL}
-  setup periodic timer ShuffleTimer{time=shuffleTimer}
+  setup periodic timer ShuffleTimer{time=shuffleTimer, repeat=shuffleTimer}
   
 --------------------------------------------------------------------------------
 -- View manipulation
@@ -128,7 +128,7 @@ hyParView HPVC{..} contactNode = do
             \n -> n != sender && n != newNode
         ttl <- ttl - (1 :: Int)
         trigger send ForwardJoinMessage{to=randomNode, from=myself,
-                                        joined=newNode, ttl} -- we can't write ttl=ttl-1 directly here, because - returns "system"... bummer
+                                        joined=newNode, ttl}
 
   upon receive \NeighbourMessage{from=sender, priority} -> do
     addToActive <- priority && isActiveViewFull
@@ -212,7 +212,7 @@ data NeighbourMessage   = NeighbourMessage { from :: Host, to :: Host, priority 
 data NeighbourReplyMessage = NeighbourReplyMessage { from :: Host, to :: Host, accepted :: Bool }
 data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, nodes :: Set Node}
 data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Node, replyNodes :: Set Node}
-data ShuffleTimer = ShuffleTimer{ time :: Int }
+data ShuffleTimer = ShuffleTimer{ time :: Int, repeat :: Int}
 
 --------------------------------------------------------------------------------
 -- Helpers
