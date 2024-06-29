@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedRecordDot, DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase, MagicHash #-}
-module System.Spec.Interpret
+module System.Distributed.Interpret
   ( runCore, interpSystem, wait, Verbosity
   ) where
 
@@ -16,14 +16,13 @@ import Control.Monad.Free
 import Data.Map (Map)
 import qualified Data.Map as M
 
-import Control.Concurrent.STM
 import Control.Concurrent.MVar
 import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
 import Data.Time.Clock (getCurrentTime)
 
-import System.Spec.Free
+import System.Distributed.Free
 
 --------------------------------------------------------------------------------
 -- * Interpreter
@@ -78,7 +77,7 @@ interpSystem sys = void do
 
 worker :: Core ()
 worker = Core \cd -> do
-  let loop = unCore worker cd
+  let loop = worker `unCore` cd
   handlers <- readIORef cd.handlers
 
   -- Waits for message

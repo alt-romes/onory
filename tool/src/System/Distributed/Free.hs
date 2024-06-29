@@ -1,5 +1,5 @@
 {-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase #-}
-module System.Spec.Free where
+module System.Distributed.Free where
 
 import GHC.Records
 import Data.IORef

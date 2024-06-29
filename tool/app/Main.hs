@@ -4,8 +4,8 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main where
 
-import System.Spec.Interpret
-import System.Spec
+import System.Distributed.Interpret
+import System.Distributed.Prelude
 
 default (Int)
 

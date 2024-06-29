@@ -1,8 +1,8 @@
 {-# LANGUAGE LambdaCase, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies #-}
 {-# LANGUAGE UndecidableInstances #-} -- Eq a => SEq a et friends
 -- todo: explicit export list of whole language features
-module System.Spec
-  ( module System.Spec
+module System.Distributed.Prelude
+  ( module System.Distributed.Prelude
   -- re-exports, for now at the end.
   , Host, System, Set, Map
 
@@ -31,7 +31,7 @@ import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
                       )
 import qualified Prelude as P
 
-import System.Spec.Free
+import System.Distributed.Free
 
 --------------------------------------------------------------------------------
 -- * Main interface
@@ -85,11 +85,6 @@ logStr = traceStr
 
 ok :: System ()
 ok = pure ()
-
---------------------------------------------------------------------------------
--- * Known channel events?
-
---- ...
 
 --------------------------------------------------------------------------------
 -- * State manipulation
