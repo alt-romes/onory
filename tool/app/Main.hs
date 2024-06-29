@@ -10,7 +10,7 @@ import System.Distributed.Prelude
 default (Int)
 
 main :: IO ()
-main = runTower 5
+main = runLebab 4
   [ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost"
   ]
 

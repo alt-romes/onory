@@ -1,6 +1,6 @@
-{-# LANGUAGE OverloadedRecordDot, DerivingVia, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies, LambdaCase, MagicHash #-}
+{-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash #-}
 module System.Distributed.Interpret
-  ( runTower, runCore, interpSystem, wait, Verbosity
+  ( runLebab, runProtocols, runSystem, runCore, interpSystem, wait, Verbosity
   ) where
 
 import GHC.Exts (dataToTag#, Int(I#))
@@ -25,13 +25,22 @@ import Data.Time.Clock (getCurrentTime)
 import System.Distributed.Free
 
 --------------------------------------------------------------------------------
--- * Interpreter
+-- * Runners
 
--- | Run a stack of protocols together
-runTower :: Verbosity -> [Protocol] -> IO ()
-runTower v protos = do
+-- | Run multiple protocols concurrently in harmony
+runLebab, runProtocols :: Verbosity -> [Protocol] -> IO ()
+runLebab = runProtocols
+runProtocols v protos = do
   sync <- runCore v $ interpSystem $ sequence protos
   wait sync
+
+runSystem :: Verbosity -> System a -> IO ()
+runSystem v s = do
+  sync <- runCore v $ interpSystem s
+  wait sync
+
+--------------------------------------------------------------------------------
+-- * Interpreter
 
 runCore :: Verbosity -> Core a -> IO Sync
 runCore v c = do
@@ -155,7 +164,7 @@ trace v str = do
     liftIO (putStrLn (show time ++ ": (" ++ show prnm ++ ") " ++ str))
 
 traceInternal :: CoreData -> String -> IO ()
-traceInternal c s = trace 5 s `unCore` c
+traceInternal c s = trace 4 s `unCore` c
 
 -- | Basically 'interpSystem', but sets the (new) protocol executor in the local env
 interpProtocol :: Name -> Protocol -> Core ()
