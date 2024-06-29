@@ -10,9 +10,12 @@ module System.Distributed.Prelude
   -- re-export Prelude, hiding the functions we override.
   -- Importers should use no implicit prelude
   , module Prelude
+  , Generic, Binary
   )
   where
 
+import GHC.Generics (Generic)
+import Data.Binary (Binary)
 import Data.Proxy
 import Data.Kind
 import Control.Monad hiding (when)

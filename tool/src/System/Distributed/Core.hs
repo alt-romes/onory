@@ -8,6 +8,7 @@ module System.Distributed.Core where
 
 import GHC.Fingerprint
 import GHC.Records
+import Data.Binary
 import Data.String
 import Type.Reflection
 import Data.Typeable (typeRepFingerprint)
@@ -39,11 +40,11 @@ upon = uponEvent
 trigger :: Event n -> n -> System ()
 trigger = triggerEvent
 
-receive :: ∀ msg. HasField "to" msg Host => Typeable msg => Event msg
+receive :: ∀ msg. (HasField "to" msg Host, Binary msg) => Typeable msg => Event msg
 receive = Message (typeFingerprint @msg) (show (typeRep @msg))
 
 -- | Send a message. The type of message sent must have a field "to".
-send :: ∀ msg. HasField "to" msg Host => Typeable msg => Event msg
+send :: ∀ msg. (HasField "to" msg Host, Binary msg) => Typeable msg => Event msg
 send = Message (typeFingerprint @msg) (show (typeRep @msg))
 
 timer :: ∀ timer. HasField "time" timer Int => Typeable timer => Event timer

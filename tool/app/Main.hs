@@ -1,5 +1,5 @@
 -- ROMES:TODO: Pass these options in the GHC wrapper automatically.
-{-# LANGUAGE LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields, DeriveGeneric, DeriveAnyClass #-}
 {-# OPTIONS_GHC -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
 module Main where
@@ -13,11 +13,11 @@ default (Int)
 main :: IO ()
 main = do
   getArgs >>= \case
-    [port] ->
-      runLebab SysConf{verbosity=4, hostname="localhost", port=read port}
-        [ hyParView (HPVC 10 100 10 10 500 5 5 5) (host "localhost" 25002)
+    [port, contactPort] ->
+      runLebab SysConf{verbosity=4, hostname="127.0.0.1", port=read port}
+        [ hyParView (HPVC 10 100 10 10 15000 5 5 5) (host "127.0.0.1" (read contactPort))
         ]
-    _ -> error "Usage: ./Main <port>"
+    _ -> error "Usage: ./Main <port> <contact port>"
 
 type Node = Host
 
@@ -213,14 +213,15 @@ hyParView HPVC{..} contactNode = protocol "HyParView" do
 --------------------------------------------------------------------------------
 -- Messages
 
-data JoinMessage        = JoinMessage { from :: Host, to :: Host, ttl :: Int }
-data ForwardJoinMessage = ForwardJoinMessage { from :: Host, to :: Host, joined :: Host, ttl :: Int }
-data JoinReplyMessage   = JoinReplyMessage { from :: Host, to :: Host }
-data DisconnectMessage  = DisconnectMessage { from :: Host, to :: Host }
-data NeighbourMessage   = NeighbourMessage { from :: Host, to :: Host, priority :: Bool }
-data NeighbourReplyMessage = NeighbourReplyMessage { from :: Host, to :: Host, accepted :: Bool }
-data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, nodes :: Set Node}
-data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Node, replyNodes :: Set Node}
+data JoinMessage        = JoinMessage { from :: Host, to :: Host, ttl :: Int } deriving (Generic, Binary)
+data ForwardJoinMessage = ForwardJoinMessage { from :: Host, to :: Host, joined :: Host, ttl :: Int } deriving (Generic, Binary)
+data JoinReplyMessage   = JoinReplyMessage { from :: Host, to :: Host } deriving (Generic, Binary)
+data DisconnectMessage  = DisconnectMessage { from :: Host, to :: Host } deriving (Generic, Binary)
+data NeighbourMessage   = NeighbourMessage { from :: Host, to :: Host, priority :: Bool } deriving (Generic, Binary)
+data NeighbourReplyMessage = NeighbourReplyMessage { from :: Host, to :: Host, accepted :: Bool } deriving (Generic, Binary)
+data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, nodes :: Set Node} deriving (Generic, Binary)
+data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Node, replyNodes :: Set Node} deriving (Generic, Binary)
+
 data ShuffleTimer = ShuffleTimer{ time :: Int, repeat :: Int}
 
 --------------------------------------------------------------------------------

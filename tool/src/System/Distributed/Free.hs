@@ -3,6 +3,7 @@ module System.Distributed.Free where
 
 import GHC.Fingerprint
 import GHC.Records
+import Data.Binary
 import Data.IORef
 import Data.String
 import Data.Kind
@@ -10,7 +11,6 @@ import Type.Reflection
 import System.Random (Random)
 import Network.Transport (EndPointAddress(..), TransportError, ConnectErrorCode)
 import qualified Data.ByteString.Char8 as BS8
-
 import Control.Monad.Free
 import Control.Monad.Free.TH
 
@@ -87,7 +87,7 @@ data Event (evt_t :: Type) where
   Indication
     :: { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
   Message
-    :: HasField "to" evt_t Host
+    :: (HasField "to" evt_t Host, Binary evt_t)
     => { tyId :: Fingerprint, tyStr :: String }   -> Event evt_t
   Timer
     :: HasField "time" evt_t Int
@@ -155,6 +155,7 @@ instance Show (Event t) where
 
 deriving instance Eq Host
 deriving instance Ord Host
+deriving instance Binary Host
 
 instance Show Host where
   show (Host (EndPointAddress (reverse . BS8.unpack -> '0':':':xs))) = reverse xs

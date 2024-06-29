@@ -1,9 +1,17 @@
-{-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash, DuplicateRecordFields, RecordWildCards #-}
+{-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds,
+   TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash,
+   DuplicateRecordFields, RecordWildCards, DeriveAnyClass #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant <$>" #-}
 module System.Distributed.Interpret
   ( runLebab, runProtocols, runSystem, runCore, interpSystem, wait, SysConf(..)
   ) where
 
 import GHC.Exts (dataToTag#, Int(I#))
+import GHC.Fingerprint (Fingerprint)
+import GHC.Records
+import Data.Binary (Binary, encode, decode)
+import Data.Constraint
 import Data.IORef
 import Control.Monad.Reader
 import Type.Reflection
@@ -20,7 +28,7 @@ import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
 import Data.Time.Clock (getCurrentTime)
-import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString (ByteString, toStrict, fromStrict)
 
 import System.Distributed.Free
 
@@ -52,12 +60,13 @@ data SysConf = SysConf
 
 runCore :: SysConf -> Core a -> IO Sync
 runCore SysConf{..} c = do
-  handlers <- newIORef M.empty
-  msgQueue <- newChan
-  sync <- newEmptyMVar
-  (self, outgoingMsgs) <- initTcpManager verbosity hostname port msgQueue
+  msgDecoders <- newIORef M.empty
+  handlers    <- newIORef M.empty
+  msgQueue    <- newChan
+  sync        <- newEmptyMVar
+  (self, outgoingMsgs) <- initTcpManager verbosity hostname port msgDecoders msgQueue
   let coreData = CoreData { msgQueue, handlers, inProto = TopLevel
-                          , verbosity, outgoingMsgs, self }
+                          , verbosity, outgoingMsgs, self, msgDecoders }
   _ <- forkFinally (worker `unCore` coreData) (\_ -> putMVar sync ())
   _ <- c `unCore` coreData
   return (Sync sync)
@@ -123,6 +132,17 @@ registerHandler evt f = Core \cd -> do
   let ek = EK evt
       h  = H $ (`unCore` cd) . interpSystem <$> f
   modifyIORef' cd.handlers (M.insertWith (<>) ek [(cd.inProto,h)])
+
+  -- Handlers registered for Messages must also store the decoder function (see
+  -- 'MsgDecoders') since messages come from the network with a type fingerprint only.
+  case evt of
+    Message{tyId} -> {- matching on Message gives us a Binary instance for @t@ -}
+      modifyIORef' cd.msgDecoders (M.insert tyId (MDEC @t (ndecode, Dict)))
+        -- insert may override the existing decoder if multiple handlers for the
+        -- same message are defined, but this is fine since the decoder will always
+        -- be the same (the Binary instance decoder)
+    _ -> pure ()
+
 
 queueEvent :: Event t -> t -> Core ()
 queueEvent evt t = Core \cd ->
@@ -221,8 +241,8 @@ internalVerbosity = 4
 --
 -- Returns the channel from which it reads messages to send to other hosts, and this system's host.
 -- Receives the channel onto which it will write message-received and channel events.
-initTcpManager :: Verbosity -> String -> Int -> MsgQueue -> IO (Host, MsgQueue)
-initTcpManager v hostname port coreMsgs = do
+initTcpManager :: Verbosity -> String -> Int -> MsgDecoders -> MsgQueue -> IO (Host, MsgQueue)
+initTcpManager v hostname port decoders coreMsgQ = do
   -- The connection will only be reused if the announced address when
   -- connecting to the other node matches the address the other node uses to
   -- connect to this node.
@@ -239,41 +259,62 @@ initTcpManager v hostname port coreMsgs = do
   _ <- forkIO $ forever $ do
     event <- N.receive endpoint
     case event of
-      N.Received _ msg -> print msg
+      N.Received _ [msgTyFp, msgTyStr, msgPayload] -> do
+        let tyId  = ndecode msgTyFp
+            tyStr = ndecode msgTyStr
+        M.lookup tyId <$> readIORef decoders >>= \case
+          Nothing ->
+            netTrace $ "No decoder found for " ++ show tyStr ++ ". Ignoring message..."
+          Just (MDEC (decoder, dict)) -> withDict dict $
+            -- Write the received message into the core message queue from
+            -- where it will be dequeued and processed by the appropriate handlers
+            writeChan coreMsgQ (Msg Message{tyId, tyStr} (decoder msgPayload))
+      N.Received _ m ->
+        netTrace $ "Unexpected message content: " ++ show m
+
       N.ConnectionClosed e ->
         -- todo: can this detect outgoing down? or incoming down?
         netTrace ("TODO: Out/InnConnDown connection closed " ++ show e)
       N.ConnectionOpened _ _ ep -> do
         -- Flag in connection up
-        writeChan coreMsgs (Msg (ChannelEvt (typeRep @InConnUp)) InConnUp{from = Host ep})
-      N.ReceivedMulticast{} -> pure () -- do nothing
-      N.EndPointClosed -> pure () -- ok
+        writeChan coreMsgQ (Msg (ChannelEvt (typeRep @InConnUp)) InConnUp{from = Host ep})
+      N.ReceivedMulticast{} -> do
+        netTrace "Ignoring received multicast"
+        pure () -- do nothing
+      N.EndPointClosed -> do
+        netTrace "Endpoint closed?"
+        pure () -- ok
       N.ErrorEvent e -> do
         netTrace ("Unexpected error event " ++ show e)
 
   -- Outgoing side (starts connections)
   _ <- forkIO $ forever $ do
-    Msg (Message _ t) m <- readChan outgoingMsgs
-    N.connect endpoint m.to.addr N.ReliableOrdered N.defaultConnectHints {-todo: set timeout in hints ? -}
+    Msg (Message msgTyFP msgTyStr) msg <- readChan outgoingMsgs
+    N.connect endpoint msg.to.addr N.ReliableOrdered N.defaultConnectHints {-todo: set timeout in hints ? -}
       >>= \case
         Left err ->
           -- Flag out connection failed
-          writeChan coreMsgs (Msg (ChannelEvt (typeRep @OutConnFailed)) OutConnFailed{ err, to=m.to })
+          writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnFailed)) OutConnFailed{ err, to=msg.to })
         Right outConn -> do
           -- Flag channel up
-          writeChan coreMsgs (Msg (ChannelEvt (typeRep @OutConnUp)) OutConnUp{to = m.to})
+          writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnUp)) OutConnUp{to = msg.to})
           -- We could store outConn in the map and kind of manage it, but these
           -- connections are supposed to be very light, so there's no need to
           -- cache them in any way unless proven otherwise.
-          N.send outConn [BS8.pack $ show t]
+          N.send outConn [nencode msgTyFP, nencode msgTyStr, nencode msg]
             >>= \case
               Left e -> netTrace ("Unexpected error when sending message " ++ show e)
               Right () -> pure ()
-    -- writeChan coreMsgs (Msg evt t) 
 
   return (Host (N.address endpoint), outgoingMsgs)
 
 -- other channel protocols (e.g. UDP) are not supported
+
+nencode :: Binary a => a -> ByteString
+nencode = toStrict . encode
+
+ndecode :: Binary a => ByteString -> a
+ndecode = decode . fromStrict
 
 --------------------------------------------------------------------------------
 -- * Core datatypes
@@ -313,7 +354,16 @@ data CoreData = CoreData
   , verbosity :: Verbosity
   , outgoingMsgs :: MsgQueue
   , self :: Host
+  , msgDecoders :: MsgDecoders
   }
+
+-- | We need a way of converting a bytestring we got from the net into a type
+-- we can pass to the handler. We assign a fingerprint identifying the type to
+-- a decoder function whose result we can "safely" unsafe coerce into the
+-- argument expected by the handler for the message whose type has that same
+-- fingerprint.
+type MsgDecoders = IORef (Map Fingerprint MsgDecoder)
+data MsgDecoder = forall a. MDEC (ByteString -> a, Dict (HasField "to" a Host, Binary a))
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
 data EventKey = forall t. EK (Event t)
