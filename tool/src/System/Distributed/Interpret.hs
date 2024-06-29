@@ -10,7 +10,8 @@ module System.Distributed.Interpret
 import GHC.Exts (dataToTag#, Int(I#))
 import GHC.Fingerprint (Fingerprint)
 import GHC.Records
-import Data.Binary (Binary, encode, decode)
+import GHC.Generics
+import Data.Binary (Binary, encode, decode, decodeOrFail)
 import Data.Constraint
 import Data.IORef
 import Control.Monad.Reader
@@ -136,8 +137,8 @@ registerHandler evt f = Core \cd -> do
   -- Handlers registered for Messages must also store the decoder function (see
   -- 'MsgDecoders') since messages come from the network with a type fingerprint only.
   case evt of
-    Message{tyId} -> {- matching on Message gives us a Binary instance for @t@ -}
-      modifyIORef' cd.msgDecoders (M.insert tyId (MDEC @t (ndecode, Dict)))
+    Message{tyId} -> do {- matching on Message gives us a Binary instance for @t@ -}
+      modifyIORef' cd.msgDecoders (M.insert tyId (MDEC @t Dict))
         -- insert may override the existing decoder if multiple handlers for the
         -- same message are defined, but this is fine since the decoder will always
         -- be the same (the Binary instance decoder)
@@ -259,16 +260,20 @@ initTcpManager v hostname port decoders coreMsgQ = do
   _ <- forkIO $ forever $ do
     event <- N.receive endpoint
     case event of
-      N.Received _ [msgTyFp, msgTyStr, msgPayload] -> do
-        let tyId  = ndecode msgTyFp
-            tyStr = ndecode msgTyStr
+      N.Received _ [payload] -> do
+        traceIO (internalVerbosity+1) ("Received message over the wire " ++ show payload) v "Network"
+        let NetworkMessage{tyId, tyStr, msgPayload} = ndecode payload
         M.lookup tyId <$> readIORef decoders >>= \case
           Nothing ->
             netTrace $ "No decoder found for " ++ show tyStr ++ ". Ignoring message..."
-          Just (MDEC (decoder, dict)) -> withDict dict $
-            -- Write the received message into the core message queue from
-            -- where it will be dequeued and processed by the appropriate handlers
-            writeChan coreMsgQ (Msg Message{tyId, tyStr} (decoder msgPayload))
+          Just (MDEC @et dict) -> withDict dict $
+            case decodeOrFail $ fromStrict msgPayload of
+              Left (full, _, err) ->
+                netTrace $ "Failed to decode network message with error " ++ show err ++ ": " ++ show full
+              Right (_, _, msg) ->
+                -- Write the received message into the core message queue from
+                -- where it will be dequeued and processed by the appropriate handlers
+                writeChan coreMsgQ (Msg (Message @et tyId tyStr) msg)
       N.Received _ m ->
         netTrace $ "Unexpected message content: " ++ show m
 
@@ -285,6 +290,9 @@ initTcpManager v hostname port decoders coreMsgQ = do
         netTrace "Endpoint closed?"
         pure () -- ok
       N.ErrorEvent e -> do
+        -- ToDo: I suppose we'll need a set of outgoing and incoming
+        -- connections, and when one of them drops here, we look it up and flag
+        -- appropriately (in a separate io thread?).
         netTrace ("Unexpected error event " ++ show e)
 
   -- Outgoing side (starts connections)
@@ -301,7 +309,9 @@ initTcpManager v hostname port decoders coreMsgQ = do
           -- We could store outConn in the map and kind of manage it, but these
           -- connections are supposed to be very light, so there's no need to
           -- cache them in any way unless proven otherwise.
-          N.send outConn [nencode msgTyFP, nencode msgTyStr, nencode msg]
+          let payload = nencode $ NetworkMessage msgTyFP msgTyStr (nencode msg)
+          traceIO (internalVerbosity+1) ("Sending message over the wire " ++ show payload) v "Network"
+          N.send outConn [payload]
             >>= \case
               Left e -> netTrace ("Unexpected error when sending message " ++ show e)
               Right () -> pure ()
@@ -315,6 +325,8 @@ nencode = toStrict . encode
 
 ndecode :: Binary a => ByteString -> a
 ndecode = decode . fromStrict
+
+data NetworkMessage = NetworkMessage { tyId :: Fingerprint, tyStr :: String, msgPayload :: ByteString }
 
 --------------------------------------------------------------------------------
 -- * Core datatypes
@@ -363,7 +375,7 @@ data CoreData = CoreData
 -- argument expected by the handler for the message whose type has that same
 -- fingerprint.
 type MsgDecoders = IORef (Map Fingerprint MsgDecoder)
-data MsgDecoder = forall a. MDEC (ByteString -> a, Dict (HasField "to" a Host, Binary a))
+data MsgDecoder = forall a. MDEC (Dict (HasField "to" a Host, Binary a))
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
 data EventKey = forall t. EK (Event t)
@@ -378,11 +390,11 @@ newtype Sync = Sync (MVar ())
 instance Show Handler where
   show _ = "<handler>"
 
-deriving instance Show EventKey
-
 instance Show ExecutorContext where
   show TopLevel = "Core"
   show (Scoped n _) = n
+
+deriving instance Show EventKey
 
 instance Eq EventKey where
   (==) (EK a) (EK b) =
@@ -410,3 +422,5 @@ instance Ord EventKey where
       (Indication n1 r1, Indication n2 r2) -> n1 `compare` n2 <> SomeTypeRep r1 `compare` SomeTypeRep r2
       (_, _) -> I# (dataToTag# a) `compare` I# (dataToTag# b)
 
+deriving instance Generic NetworkMessage
+deriving instance Binary NetworkMessage
