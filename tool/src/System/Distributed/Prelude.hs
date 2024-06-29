@@ -2,7 +2,8 @@
 {-# LANGUAGE UndecidableInstances #-} -- Eq a => SEq a et friends
 -- todo: explicit export list of whole language features
 module System.Distributed.Prelude
-  ( module System.Distributed.Prelude
+  ( module System.Distributed.Core
+  , module System.Distributed.Prelude
   -- re-exports, for now at the end.
   , Host, System, Set, Map
 
@@ -12,9 +13,7 @@ module System.Distributed.Prelude
   )
   where
 
-import GHC.Records
 import Data.Proxy
-import Type.Reflection
 import Data.Kind
 import Control.Monad hiding (when)
 
@@ -22,7 +21,6 @@ import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
-import System.Random (Random)
 
 import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
                       , all, any, filter
@@ -32,72 +30,7 @@ import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
 import qualified Prelude as P
 
 import System.Distributed.Free
-
---------------------------------------------------------------------------------
--- * Main interface
-
-request :: ∀ req. Typeable req => Name -> Event req
-request name = Request name (typeRep @req)
-
-indication :: ∀ ind. Typeable ind => Name -> Event ind
-indication name = Indication name (typeRep @ind)
-
-self :: System Host
-self = getSelf
-
-new :: a -> System (Mutable a)
-new = mkNew
-
-upon :: Event n -> (n -> System a) -> System ()
-upon = uponEvent
-
-trigger :: Event n -> n -> System ()
-trigger = triggerEvent
-
-receive :: ∀ msg. Typeable msg => Event msg
-receive = Message (typeRep @msg)
-
--- | Send a message. The type of message sent must have
-send :: ∀ msg. Typeable msg => Event msg
-send = Message (typeRep @msg)
-
-timer :: ∀ timer. Typeable timer => Event timer
-timer = Timer (typeRep @timer)
-
-setup :: HasField "time" timer Int {- time field in milliseconds -}
-      => TimerType timer -> Event timer -> timer -> System ()
-setup = setupTimer
-
-periodic :: HasField "repeat" timer Int {- repeat every n milliseconds -} => TimerType timer
-periodic = PeriodicTimer
-
-oneshot :: TimerType timer
-oneshot  = OneShotTimer
-
-cancel :: Event timer -> System ()
-cancel = cancelTimer
-
-random :: Random a => (a, a) -> System a
-random = getRandom
-
-logStr :: Int -> String -> System ()
-logStr = traceStr
-
-ok :: System ()
-ok = pure ()
-
---------------------------------------------------------------------------------
--- * State manipulation
-
-modify :: Mutable a -> (a -> a) -> System ()
-modify = modifyState 
-
-get :: Mutable a -> System a
-get = getState 
-
-pattern (:=) :: Mutable a -> a -> System ()
-pattern (:=) <- _ {- what does this direction mean -}
-  where (:=) ref x = modify ref (const x)
+import System.Distributed.Core
 
 --------------------------------------------------------------------------------
 -- * Control flow
@@ -418,24 +351,6 @@ randomSubset (c, ln) = do
       go acc' (i P.- 1)
   e <- empty @(ImmutableCR a)
   go e (min s n)
-
---------------------------------------------------------------------------------
--- * Logging
-
-print :: Show a => a -> System ()
-print = logStr 0 . show
-
-puts :: String -> System ()
-puts = logStr 0
-
-trace :: String -> System ()
-trace = logStr 1
-
---------------------------------------------------------------------------------
--- * Escape hatch
-
-doIO :: IO a -> System a
-doIO = escapeTheSystem
 
 --------------------------------------------------------------------------------
 -- * Utilities

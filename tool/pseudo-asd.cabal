@@ -18,7 +18,7 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  System.Distributed.Prelude, System.Distributed.Interpret, System.Distributed.Free
+    exposed-modules:  System.Distributed.Prelude, System.Distributed.Core, System.Distributed.Interpret, System.Distributed.Free
     -- other-modules:
     -- other-extensions:
     -- We depend on GHC 9.10 since we use visible forall in types of terms.
