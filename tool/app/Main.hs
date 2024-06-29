@@ -10,9 +10,9 @@ import System.Distributed.Prelude
 default (Int)
 
 main :: IO ()
-main = do
-  (s, _) <- runCore 3 (interpSystem $ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost")
-  wait s
+main = runTower 5
+  [ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost"
+  ]
 
 type Node = Host
 
@@ -42,7 +42,7 @@ data HyParViewConf =
 
 -- Paper: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 -- Pseudo code: https://github.com/alt-romes/projeto-asd/blob/master/pseudo-code/HyParView.c#L89
-hyParView HPVC{..} contactNode = do
+hyParView HPVC{..} contactNode = protocol "HyParView" do
   puts "Starting HyParView..."
   myself <- self
   puts ("I am " ++ show myself)

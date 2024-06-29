@@ -13,10 +13,33 @@ import Control.Monad.Free.TH
 -- | A distributed system specification
 type System = Free SystemF
 
+-- | A protocol specifies the behaviour of a part of the distributed system.
+-- Protocols running as part of the same system may interact with one another by
+-- using requests and indications.
+--
+-- A protocol should never need to handle timers set-up by other protocols, nor
+-- by messages declared, send and received by other protocols.
+--
+-- This can be reasonably ensured by defining one protocol per module, and
+-- common indications and requests in a common module imported by all protocol
+-- modules.
+--
+-- The main module should then be responsible for putting together all these
+-- protocols and running them as a whole system (using an interpreter).
+--
+-- The boundary of the protocol must also be made explicit by using
+-- 'protocolBoundary' (or 'protocol' from 'System.Distributed.Core'). Declaring
+-- the boundary of the protocol allows it to be treated as a unit which can run
+-- in parallel to other protocols.
+type Protocol = System ()
+
 -- | Not /that/ SystemF.
 --
 -- A functor to generate the embedded language of distributed systems specifications.
 data SystemF next where
+
+  ProtocolBoundary
+    :: Name -> Protocol -> next -> SystemF next
 
   UponEvent
     :: Event et -> (et -> System a) -> next -> SystemF next
@@ -55,8 +78,8 @@ data SystemF next where
 -- Core datatypes
 
 data Event (evt_t :: Type)
-  = Request    { name :: Name, argTy :: TypeRep evt_t }
-  | Indication { name :: Name, argTy :: TypeRep evt_t }
+  = Request    { name :: String, argTy :: TypeRep evt_t }
+  | Indication { name :: String, argTy :: TypeRep evt_t }
   | Message    { argTy :: TypeRep evt_t }
   | Timer      { argTy :: TypeRep evt_t }
   | StopTimer  { argTy :: TypeRep evt_t }
@@ -64,13 +87,13 @@ data Event (evt_t :: Type)
 
 newtype Mutable a = Mutable (IORef a)
 
-type Name = String
-type Host = String
-type Verbosity = Int
-
 data TimerType timer where
   PeriodicTimer :: HasField "repeat" timer Int => TimerType timer
   OneShotTimer  :: TimerType timer
+
+type Name = String
+type Host = String
+type Verbosity = Int
 
 instance Show (Event t) where
   show e = case e of
@@ -85,6 +108,7 @@ instance Show (Event t) where
 -- I'll give you a functor ...
 instance Functor SystemF where
   fmap f = \case
+    ProtocolBoundary n p next -> ProtocolBoundary n p (f next)
     UponEvent x impl next -> UponEvent x impl (f next)
     TriggerEvent x e n -> TriggerEvent x e (f n)
     GetSelf c -> GetSelf (f . c)

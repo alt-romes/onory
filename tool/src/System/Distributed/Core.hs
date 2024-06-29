@@ -3,10 +3,7 @@
 -- In contrast, the prelude module exports this module plus the kitchen sink
 -- and a lot of overloaded operators which may not be suitable in the context
 -- of using this embedded language as proper Haskell.
-module System.Distributed.Core
-  ( module System.Distributed.Core
-  )
-  where
+module System.Distributed.Core where
 
 import GHC.Records
 import Type.Reflection
@@ -22,6 +19,9 @@ request name = Request name (typeRep @req)
 
 indication :: ∀ ind. Typeable ind => Name -> Event ind
 indication name = Indication name (typeRep @ind)
+
+protocol :: Name -> Protocol -> System ()
+protocol = protocolBoundary
 
 self :: System Host
 self = getSelf
