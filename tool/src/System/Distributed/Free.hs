@@ -1,11 +1,15 @@
-{-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase #-}
+{-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase, DuplicateRecordFields, ViewPatterns #-}
 module System.Distributed.Free where
 
+import GHC.Fingerprint
 import GHC.Records
 import Data.IORef
+import Data.String
 import Data.Kind
 import Type.Reflection
 import System.Random (Random)
+import Network.Transport (EndPointAddress(..), TransportError, ConnectErrorCode)
+import qualified Data.ByteString.Char8 as BS8
 
 import Control.Monad.Free
 import Control.Monad.Free.TH
@@ -63,7 +67,7 @@ data SystemF next where
     :: Random a => (a, a) -> (a -> next) -> SystemF next
 
   SetupTimer
-    :: HasField "time" timer Int => TimerType timer -> Event timer -> timer -> next -> SystemF next
+    :: TimerType timer -> Event timer -> timer -> next -> SystemF next
 
   CancelTimer
     :: Event timer -> next -> SystemF next
@@ -77,13 +81,24 @@ data SystemF next where
 --------------------------------------------------------------------------------
 -- Core datatypes
 
-data Event (evt_t :: Type)
-  = Request    { name :: String, argTy :: TypeRep evt_t }
-  | Indication { name :: String, argTy :: TypeRep evt_t }
-  | Message    { argTy :: TypeRep evt_t }
-  | Timer      { argTy :: TypeRep evt_t }
-  | StopTimer  { argTy :: TypeRep evt_t }
-  deriving (Eq, Ord)
+data Event (evt_t :: Type) where
+  Request
+    :: { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
+  Indication
+    :: { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
+  Message
+    :: HasField "to" evt_t Host
+    => { tyId :: Fingerprint, tyStr :: String }   -> Event evt_t
+  Timer
+    :: HasField "time" evt_t Int
+    => { argTy :: TypeRep evt_t } -> Event evt_t
+  StopTimer
+    :: { argTy :: TypeRep evt_t } -> Event evt_t
+  ChannelEvt
+    :: { argTy :: TypeRep evt_t } -> Event evt_t
+
+-- NB: Messages only store tyStr = @show (typeRep @evt_t)@ for tracing purposes.
+-- The fingerprint is the sole field used for the event key ordering.
 
 newtype Mutable a = Mutable (IORef a)
 
@@ -91,17 +106,19 @@ data TimerType timer where
   PeriodicTimer :: HasField "repeat" timer Int => TimerType timer
   OneShotTimer  :: TimerType timer
 
+newtype Host = Host { addr :: EndPointAddress }
+
 type Name = String
-type Host = String
 type Verbosity = Int
 
-instance Show (Event t) where
-  show e = case e of
-    Request{name, argTy}    -> "request "      ++ show name ++ ":" ++ show argTy
-    Indication{name, argTy} -> "indication "   ++ show name ++ ":" ++ show argTy
-    Message{argTy}          -> "message "      ++ show argTy
-    Timer{argTy}            -> "timer "        ++ show argTy
-    StopTimer{argTy}        -> "cancel timer " ++ show argTy
+--------------------------------------------------------------------------------
+-- Network channel events
+
+newtype OutConnUp     = OutConnUp { to :: Host }
+newtype OutConnDown   = OutConnDown { to :: Host }
+data    OutConnFailed = OutConnFailed { to :: Host, err :: TransportError ConnectErrorCode }
+newtype InConnUp      = InConnUp { from :: Host }
+newtype InConnDown    = InConnDown { from :: Host }
 
 --------------------------------------------------------------------------------
 
@@ -124,3 +141,26 @@ instance Functor SystemF where
 -- Make me a monad... for free!
 $(makeFree ''SystemF)
 
+--------------------------------------------------------------------------------
+-- Instances and utilities
+
+instance Show (Event t) where
+  show e = case e of
+    Request{name, argTy}    -> "request "      ++ show name ++ ":" ++ show argTy
+    Indication{name, argTy} -> "indication "   ++ show name ++ ":" ++ show argTy
+    Message{tyStr, tyId=_}  -> "message "      ++ tyStr
+    Timer{argTy}            -> "timer "        ++ show argTy
+    StopTimer{argTy}        -> "cancel timer " ++ show argTy
+    ChannelEvt{argTy}       -> "channel "      ++ show argTy
+
+deriving instance Eq Host
+deriving instance Ord Host
+
+instance Show Host where
+  show (Host (EndPointAddress (reverse . BS8.unpack -> '0':':':xs))) = reverse xs
+  show _ = error "Internal error: expecting all endpoint addresses to have endpoint id = 0"
+    -- we cutoff the ':0' bit, an internal detail.
+
+instance IsString Host where
+  fromString = Host . EndPointAddress . fromString . (++ ":0")
+    -- invariant: the nodes always use a single endpoint no 0

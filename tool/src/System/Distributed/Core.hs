@@ -1,12 +1,16 @@
 {-# LANGUAGE UnicodeSyntax, PatternSynonyms, DataKinds #-}
+{-# LANGUAGE AllowAmbiguousTypes #-} -- typeFingerprint
 -- | The core language for distributed systems design.
 -- In contrast, the prelude module exports this module plus the kitchen sink
 -- and a lot of overloaded operators which may not be suitable in the context
 -- of using this embedded language as proper Haskell.
 module System.Distributed.Core where
 
+import GHC.Fingerprint
 import GHC.Records
+import Data.String
 import Type.Reflection
+import Data.Typeable (typeRepFingerprint)
 import System.Random (Random)
 
 import System.Distributed.Free
@@ -35,14 +39,14 @@ upon = uponEvent
 trigger :: Event n -> n -> System ()
 trigger = triggerEvent
 
-receive :: ∀ msg. Typeable msg => Event msg
-receive = Message (typeRep @msg)
+receive :: ∀ msg. HasField "to" msg Host => Typeable msg => Event msg
+receive = Message (typeFingerprint @msg) (show (typeRep @msg))
 
--- | Send a message. The type of message sent must have
-send :: ∀ msg. Typeable msg => Event msg
-send = Message (typeRep @msg)
+-- | Send a message. The type of message sent must have a field "to".
+send :: ∀ msg. HasField "to" msg Host => Typeable msg => Event msg
+send = Message (typeFingerprint @msg) (show (typeRep @msg))
 
-timer :: ∀ timer. Typeable timer => Event timer
+timer :: ∀ timer. HasField "time" timer Int => Typeable timer => Event timer
 timer = Timer (typeRep @timer)
 
 setup :: HasField "time" timer Int {- time field in milliseconds -}
@@ -93,7 +97,31 @@ trace :: String -> System ()
 trace = logStr 1
 
 --------------------------------------------------------------------------------
+-- * Network
+
+-- | Make a host from a String and an Int
+host :: String -> Int -> Host
+host hostname port = fromString $ hostname ++ ":" ++ show port
+
+-- ** Channel events
+
+outConnUp :: Event OutConnUp
+outConnDown :: Event OutConnDown
+outConnFailed :: Event OutConnFailed
+inConnUp :: Event InConnUp
+inConnDown :: Event InConnDown
+outConnUp     = ChannelEvt (typeRep @OutConnUp)
+outConnDown   = ChannelEvt (typeRep @OutConnDown)
+outConnFailed = ChannelEvt (typeRep @OutConnFailed)
+inConnUp      = ChannelEvt (typeRep @InConnUp)
+inConnDown    = ChannelEvt (typeRep @InConnDown)
+
+--------------------------------------------------------------------------------
 -- * Escape hatch
 
 doIO :: IO a -> System a
 doIO = escapeTheSystem
+
+typeFingerprint :: ∀ msg. Typeable msg => Fingerprint
+typeFingerprint = typeRepFingerprint $ SomeTypeRep (typeRep @msg)
+

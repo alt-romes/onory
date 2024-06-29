@@ -1,18 +1,17 @@
-{-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash #-}
+{-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash, DuplicateRecordFields, RecordWildCards #-}
 module System.Distributed.Interpret
-  ( runLebab, runProtocols, runSystem, runCore, interpSystem, wait, Verbosity
+  ( runLebab, runProtocols, runSystem, runCore, interpSystem, wait, SysConf(..)
   ) where
 
 import GHC.Exts (dataToTag#, Int(I#))
-import GHC.Records
 import Data.IORef
 import Control.Monad.Reader
 import Type.Reflection
 import Control.Monad
 import Control.Monad.Free
+import qualified Network.Transport as N
+import qualified Network.Transport.TCP as N
 
--- import Data.Set (Set)
--- import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
 
@@ -21,6 +20,7 @@ import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
 import Data.Time.Clock (getCurrentTime)
+import qualified Data.ByteString.Char8 as BS8
 
 import System.Distributed.Free
 
@@ -28,26 +28,36 @@ import System.Distributed.Free
 -- * Runners
 
 -- | Run multiple protocols concurrently in harmony
-runLebab, runProtocols :: Verbosity -> [Protocol] -> IO ()
+runLebab, runProtocols :: SysConf -> [Protocol] -> IO ()
 runLebab = runProtocols
-runProtocols v protos = do
-  sync <- runCore v $ interpSystem $ sequence protos
+runProtocols conf protos = do
+  sync <- runCore conf $ interpSystem $ sequence protos
   wait sync
 
-runSystem :: Verbosity -> System a -> IO ()
-runSystem v s = do
-  sync <- runCore v $ interpSystem s
-  wait sync
+runSystem :: SysConf -> System a -> IO ()
+runSystem c s = do
+  sync <- runCore c $ interpSystem s
+  wait sync -- `onCtrlC` closeTransport transport
+
+data SysConf = SysConf
+  { verbosity :: Verbosity
+  , hostname :: String
+  -- ^ The IP that other nodes will use to connect to it is greatly preferred,
+  -- since this allows network-protocol-tcp to re-use the connection.
+  , port :: Int
+  }
 
 --------------------------------------------------------------------------------
 -- * Interpreter
 
-runCore :: Verbosity -> Core a -> IO Sync
-runCore v c = do
-  hs <- newIORef M.empty
-  mq <- newChan
+runCore :: SysConf -> Core a -> IO Sync
+runCore SysConf{..} c = do
+  handlers <- newIORef M.empty
+  msgQueue <- newChan
   sync <- newEmptyMVar
-  let coreData = CoreData mq hs TopLevel v
+  (self, outgoingMsgs) <- initTcpManager verbosity hostname port msgQueue
+  let coreData = CoreData { msgQueue, handlers, inProto = TopLevel
+                          , verbosity, outgoingMsgs, self }
   _ <- forkFinally (worker `unCore` coreData) (\_ -> putMVar sync ())
   _ <- c `unCore` coreData
   return (Sync sync)
@@ -60,7 +70,7 @@ interpSystem sys = void do
         ProtocolBoundary i p n      -> interpProtocol i p                                      >>  n
         UponEvent x impl n          -> registerHandler x (\a ->
                                        traceStr 3 ("Handling " ++ show x) >> impl a)           >>  n
-        TriggerEvent x e n          -> trace' "Triggering " x    >> queueMessage x e           >>  n
+        TriggerEvent x e n          -> trace' "Triggering " x    >> queueEvent x e           >>  n
         SetupTimer tt evt timer n   -> trace' "Setting up " evt  >> startTimer tt evt timer    >>  n
         CancelTimer evt n           -> trace' "Handling " evt    >> stopTimer evt              >>  n
         ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b)                               >>  n
@@ -69,7 +79,7 @@ interpSystem sys = void do
         GetRandom bnds n            -> liftIO (randomRIO bnds)                                 >>= n
         EscapeTheSystem io n        -> liftIO io                                               >>= n
         TraceStr v str n            -> trace v str                                             >>  n
-        GetSelf n                   -> n "localhost"
+        GetSelf n                   -> n =<< asks self
 
       trace' kw x = trace 3 (kw ++ show x)
          -- we could automatically show the argument if we required `Show`.
@@ -114,14 +124,18 @@ registerHandler evt f = Core \cd -> do
       h  = H $ (`unCore` cd) . interpSystem <$> f
   modifyIORef' cd.handlers (M.insertWith (<>) ek [(cd.inProto,h)])
 
-queueMessage :: Event t -> t -> Core ()
-queueMessage evt t = Core \cd -> writeChan cd.msgQueue (Msg evt t)
+queueEvent :: Event t -> t -> Core ()
+queueEvent evt t = Core \cd ->
+  -- For Messages, queue them onto the outgoing channel instead of the core msg queue
+  case evt of
+    Message{} -> writeChan cd.outgoingMsgs (Msg evt t)
+    _ -> writeChan cd.msgQueue (Msg evt t)
 
 -- | Start a timer.
 --
 -- NB: We create a handler automatically for a special event called stop timer
 -- This handler will kill the thread assign to the relevant timer.
-startTimer :: HasField "time" timer Int => TimerType timer -> Event timer -> timer -> Core ()
+startTimer :: TimerType timer -> Event timer -> timer -> Core ()
 startTimer tt evt@(Timer tr) timer = Core \cd -> do
   let
     -- Even though this timer may have been started within a particular protocol, any other protocol can register a handler for it.
@@ -132,39 +146,28 @@ startTimer tt evt@(Timer tr) timer = Core \cd -> do
     OneShotTimer -> do
       tid <- forkIO $ do
         threadDelay (timer.time * 1000)
-        queueMessage evt timer `unCore` cd
+        queueEvent evt timer `unCore` cd
       registerCancelTimerH tid
     PeriodicTimer -> do
       tid <- forkIO $ do
         -- Delay until first occurrence
         threadDelay (timer.time * 1000)
-        queueMessage evt timer `unCore` cd
+        queueEvent evt timer `unCore` cd
         -- Periodically repeat
         let loop = do
               threadDelay (timer.repeat * 1000)
-              queueMessage evt timer `unCore` cd
+              queueEvent evt timer `unCore` cd
               loop
          in loop
       registerCancelTimerH tid
 startTimer _ _ _ = error "Setup timer should only be called on a timer event"
 
 stopTimer :: Event timer -> Core ()
-stopTimer (Timer t) = queueMessage (StopTimer t) (error "Upon StopTimer event should not be possible to define")
+stopTimer (Timer t) = queueEvent (StopTimer t) (error "Upon StopTimer event should not be possible to define")
 stopTimer _ = error "Cancel timer should only be called on timer events"
 
 cancelTimerThread :: ThreadId -> Handler
 cancelTimerThread tid = H $ \_ -> killThread tid
-
-trace :: Verbosity -> String -> Core ()
-trace v str = do
-  verb <- asks verbosity
-  prnm <- asks inProto
-  time <- liftIO getCurrentTime
-  when (v <= verb) $
-    liftIO (putStrLn (show time ++ ": (" ++ show prnm ++ ") " ++ str))
-
-traceInternal :: CoreData -> String -> IO ()
-traceInternal c s = trace 4 s `unCore` c
 
 -- | Basically 'interpSystem', but sets the (new) protocol executor in the local env
 interpProtocol :: Name -> Protocol -> Core ()
@@ -180,6 +183,97 @@ newExecutor = do
   ch <- newChan
   _ <- forkIO $ forever $ join (readChan ch) -- read an action from the channel and execute it forever
   return ch
+
+--------------------------------------------------------------------------------
+-- * Trace
+
+trace :: Verbosity -> String -> Core ()
+trace v str = do
+  verb <- asks (.verbosity)
+  prnm <- asks inProto
+  liftIO $ traceIO v str verb (show prnm)
+
+traceInternal :: CoreData -> String -> IO ()
+traceInternal c s = trace internalVerbosity s `unCore` c
+
+traceIO :: Verbosity -> String -> (Verbosity -> String {- context -} -> IO ())
+traceIO v str verb ctx = do
+  time <- liftIO getCurrentTime
+  when (v <= verb) $
+    liftIO (putStrLn (show time ++ ": (" ++ ctx ++ ") " ++ str))
+
+internalVerbosity :: Verbosity
+internalVerbosity = 4
+
+--------------------------------------------------------------------------------
+-- * Network
+
+-- network-transport(-tcp) take care of reusing transport between two hosts and
+-- providing lightweight connections between endpoints (see
+-- https://hackage.haskell.org/package/network-transport-tcp/docs/Network-Transport-TCP.html)
+
+-- | Manages TCP connections to other Hosts.
+--
+-- Starts a thread which reads @send@ messages from a channel and executes on
+-- them (sending them to other hosts).
+-- Another thread receives messages from other hosts and queues them onto the
+-- message queue being managed by the Core worker to be handled by the protocols.
+--
+-- Returns the channel from which it reads messages to send to other hosts, and this system's host.
+-- Receives the channel onto which it will write message-received and channel events.
+initTcpManager :: Verbosity -> String -> Int -> MsgQueue -> IO (Host, MsgQueue)
+initTcpManager v hostname port coreMsgs = do
+  -- The connection will only be reused if the announced address when
+  -- connecting to the other node matches the address the other node uses to
+  -- connect to this node.
+  let netTrace s = traceIO internalVerbosity s v "Network"
+
+  -- todo: getAddr. For now, use localhost on different ports
+  Right transport <- N.createTransport (N.defaultTCPAddr hostname (show port)) N.defaultTCPParameters
+  Right endpoint <- N.newEndPoint transport
+
+  -- Write outgoing messages to me, and I'll send them!
+  outgoingMsgs <- newChan
+
+  -- Incoming side (receives connections)
+  _ <- forkIO $ forever $ do
+    event <- N.receive endpoint
+    case event of
+      N.Received _ msg -> print msg
+      N.ConnectionClosed e ->
+        -- todo: can this detect outgoing down? or incoming down?
+        netTrace ("TODO: Out/InnConnDown connection closed " ++ show e)
+      N.ConnectionOpened _ _ ep -> do
+        -- Flag in connection up
+        writeChan coreMsgs (Msg (ChannelEvt (typeRep @InConnUp)) InConnUp{from = Host ep})
+      N.ReceivedMulticast{} -> pure () -- do nothing
+      N.EndPointClosed -> pure () -- ok
+      N.ErrorEvent e -> do
+        netTrace ("Unexpected error event " ++ show e)
+
+  -- Outgoing side (starts connections)
+  _ <- forkIO $ forever $ do
+    Msg (Message _ t) m <- readChan outgoingMsgs
+    N.connect endpoint m.to.addr N.ReliableOrdered N.defaultConnectHints {-todo: set timeout in hints ? -}
+      >>= \case
+        Left err ->
+          -- Flag out connection failed
+          writeChan coreMsgs (Msg (ChannelEvt (typeRep @OutConnFailed)) OutConnFailed{ err, to=m.to })
+        Right outConn -> do
+          -- Flag channel up
+          writeChan coreMsgs (Msg (ChannelEvt (typeRep @OutConnUp)) OutConnUp{to = m.to})
+          -- We could store outConn in the map and kind of manage it, but these
+          -- connections are supposed to be very light, so there's no need to
+          -- cache them in any way unless proven otherwise.
+          N.send outConn [BS8.pack $ show t]
+            >>= \case
+              Left e -> netTrace ("Unexpected error when sending message " ++ show e)
+              Right () -> pure ()
+    -- writeChan coreMsgs (Msg evt t) 
+
+  return (Host (N.address endpoint), outgoingMsgs)
+
+-- other channel protocols (e.g. UDP) are not supported
 
 --------------------------------------------------------------------------------
 -- * Core datatypes
@@ -217,6 +311,8 @@ data CoreData = CoreData
   , handlers :: Handlers
   , inProto  :: ExecutorContext -- ^ The protocol we are under, to tag handlers. TopLevel if not under a protocol.
   , verbosity :: Verbosity
+  , outgoingMsgs :: MsgQueue
+  , self :: Host
   }
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
@@ -241,7 +337,11 @@ instance Show ExecutorContext where
 instance Eq EventKey where
   (==) (EK a) (EK b) =
     case (a, b) of
-      (Message r1, Message r2) -> SomeTypeRep r1 == SomeTypeRep r2
+      -- The message case is the most important, since we want to store them in
+      -- maps *without* knowing the type rep, only knowing the fingerprint s.t.
+      -- messages can be sent to other nodes. Don't force the type rep! It'll
+      -- always be \bot for messages coming from other nodes.
+      (Message _dont1 f1, Message _dont2 f2) -> f1 == f2
       (Timer r1, Timer r2) -> SomeTypeRep r1 == SomeTypeRep r2
       (StopTimer r1, StopTimer r2) -> SomeTypeRep r1 == SomeTypeRep r2
       (Request n1 r1, Request n2 r2) -> n1 == n2 && SomeTypeRep r1 == SomeTypeRep r2
@@ -251,7 +351,9 @@ instance Eq EventKey where
 instance Ord EventKey where
   compare (EK a) (EK b) =
     case (a, b) of
-      (Message r1, Message r2) -> SomeTypeRep r1 `compare` SomeTypeRep r2
+      -- Be careful with messages, don't look at the type rep! See the comment
+      -- on the Eq instance above.
+      (Message _dont1 f1, Message _dont2 f2) -> f1 `compare` f2
       (Timer r1, Timer r2) -> SomeTypeRep r1 `compare` SomeTypeRep r2
       (StopTimer r1, StopTimer r2) -> SomeTypeRep r1 `compare` SomeTypeRep r2
       (Request n1 r1, Request n2 r2) -> n1 `compare` n2 <> SomeTypeRep r1 `compare` SomeTypeRep r2

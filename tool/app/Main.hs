@@ -1,18 +1,23 @@
 -- ROMES:TODO: Pass these options in the GHC wrapper automatically.
-{-# LANGUAGE RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields #-}
 {-# OPTIONS_GHC -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
 module Main where
 
+import System.Environment (getArgs)
 import System.Distributed.Interpret
 import System.Distributed.Prelude
 
 default (Int)
 
 main :: IO ()
-main = runLebab 4
-  [ hyParView (HPVC 10 100 10 10 500 5 5 5) "localhost"
-  ]
+main = do
+  getArgs >>= \case
+    [port] ->
+      runLebab SysConf{verbosity=4, hostname="localhost", port=read port}
+        [ hyParView (HPVC 10 100 10 10 500 5 5 5) (host "localhost" 25002)
+        ]
+    _ -> error "Usage: ./Main <port>"
 
 type Node = Host
 
