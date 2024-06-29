@@ -17,7 +17,6 @@ import Data.Proxy
 import Type.Reflection
 import Data.Kind
 import Control.Monad hiding (when)
-import Control.Monad.Free
 
 import Data.Set (Set)
 import qualified Data.Set as S
@@ -436,6 +435,12 @@ puts = logStr 0
 
 trace :: String -> System ()
 trace = logStr 1
+
+--------------------------------------------------------------------------------
+-- * Escape hatch
+
+doIO :: IO a -> System a
+doIO = escapeTheSystem
 
 --------------------------------------------------------------------------------
 -- * Utilities

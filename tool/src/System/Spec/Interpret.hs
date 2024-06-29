@@ -72,6 +72,7 @@ interpSystem sys = void do
           if v <= verb
             then liftIO (putStrLn (show time ++ ": " ++ str)) >> n
             else n
+        EscapeTheSystem io n -> liftIO io >>= n
 
   iterM runF sys
 

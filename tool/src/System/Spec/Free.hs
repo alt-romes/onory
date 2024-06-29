@@ -2,7 +2,6 @@
 module System.Spec.Free where
 
 import GHC.Records
-import Control.Concurrent.STM
 import Data.IORef
 import Data.Kind
 import Type.Reflection
@@ -49,6 +48,9 @@ data SystemF next where
   TraceStr
     :: Verbosity -> String -> next -> SystemF next
 
+  EscapeTheSystem -- An escape hatch to do arbitrary IO within a system
+    :: IO a -> (a -> next) -> SystemF next
+
 --------------------------------------------------------------------------------
 -- Core datatypes
 
@@ -93,6 +95,7 @@ instance Functor SystemF where
     SetupTimer tt evt timer next -> SetupTimer tt evt timer (f next)
     CancelTimer evt n -> CancelTimer evt (f n)
     TraceStr i s n -> TraceStr i s (f n)
+    EscapeTheSystem io n -> EscapeTheSystem io (f . n)
 
 -- Make me a monad... for free!
 $(makeFree ''SystemF)
