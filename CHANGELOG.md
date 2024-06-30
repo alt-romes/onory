@@ -1,4 +1,4 @@
-# Revision history for pseudo-asd
+# Revision history for onory
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
