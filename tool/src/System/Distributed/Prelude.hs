@@ -19,7 +19,6 @@ import Data.Binary (Binary)
 import Data.Proxy
 import Data.Kind
 import Control.Monad hiding (when)
-
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)

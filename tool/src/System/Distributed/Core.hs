@@ -91,10 +91,8 @@ pattern (:=) <- _ {- what does this direction mean -}
 print :: Show a => a -> System ()
 print = logStr 0 . show
 
-puts :: String -> System ()
+puts, trace :: String -> System ()
 puts = logStr 0
-
-trace :: String -> System ()
 trace = logStr 1
 
 --------------------------------------------------------------------------------

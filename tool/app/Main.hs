@@ -14,8 +14,8 @@ main :: IO ()
 main = do
   getArgs >>= \case
     [port, contactPort] ->
-      runLebab SysConf{verbosity=3, hostname="127.0.0.1", port=read port}
-        [ hyParView (HPVC 10 100 10 10 15000 5 5 5) (host "127.0.0.1" (read contactPort))
+      runLebab SysConf{verbosity=5, hostname="127.0.0.1", port=read port}
+        [ hyParView (HPVC 10 100 10 10 10000 5 5 5) (host "127.0.0.1" (read contactPort))
         ]
     _ -> error "Usage: ./Main <port> <contact port>"
 

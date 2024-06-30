@@ -146,8 +146,8 @@ $(makeFree ''SystemF)
 
 instance Show (Event t) where
   show e = case e of
-    Request{name, argTy}    -> "request "      ++ name ++ ":" ++ show argTy
-    Indication{name, argTy} -> "indication "   ++ name ++ ":" ++ show argTy
+    Request{name, argTy}    -> "request "      ++ name ++ "@" ++ show argTy
+    Indication{name, argTy} -> "indication "   ++ name ++ "@" ++ show argTy
     Message{tyStr, tyId=_}  -> "message "      ++ tyStr
     Timer{argTy}            -> "timer "        ++ show argTy
     StopTimer{argTy}        -> "cancel timer " ++ show argTy

@@ -20,17 +20,14 @@ import Control.Monad
 import Control.Monad.Free
 import qualified Network.Transport as N
 import qualified Network.Transport.TCP as N
-
 import Data.Map (Map)
 import qualified Data.Map as M
-
 import Control.Concurrent.MVar
 import Control.Concurrent
 import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
 import Data.Time.Clock (getCurrentTime)
 import Data.ByteString (ByteString, toStrict, fromStrict)
-
 import System.Distributed.Free
 
 --------------------------------------------------------------------------------
@@ -61,40 +58,44 @@ data SysConf = SysConf
 
 runCore :: SysConf -> Core a -> IO Sync
 runCore SysConf{..} c = do
-  msgDecoders <- newIORef M.empty
+  msgDecoders <- newMVar M.empty
   handlers    <- newIORef M.empty
   msgQueue    <- newChan
   sync        <- newEmptyMVar
+
   (self, outgoingMsgs) <- initTcpManager verbosity hostname port msgDecoders msgQueue
+
   let coreData = CoreData { msgQueue, handlers, inProto = TopLevel
-                          , verbosity, outgoingMsgs, self, msgDecoders }
+                          , verbosity, outgoingMsgs, self, msgDecoders
+                          }
+
   _ <- forkFinally (worker `unCore` coreData) (\_ -> putMVar sync ())
   _ <- c `unCore` coreData
   return (Sync sync)
 
 interpSystem :: System a -> Core ()
-interpSystem sys = void do
+interpSystem sys = void $ iterM runF sys where
 
-  let runF :: SystemF (Core a) -> Core a
-      runF = \case
-        ProtocolBoundary i p n      -> interpProtocol i p                                      >>  n
-        UponEvent x impl n          -> registerHandler x (\a ->
-                                       traceStr 3 ("Handling " ++ show x) >> impl a)           >>  n
-        TriggerEvent x e n          -> trace' "Triggering " x    >> queueEvent x e           >>  n
-        SetupTimer tt evt timer n   -> trace' "Setting up " evt  >> startTimer tt evt timer    >>  n
-        CancelTimer evt n           -> trace' "Handling " evt    >> stopTimer evt              >>  n
-        ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b)                               >>  n
-        MkNew i n                   -> liftIO (Mutable <$> newIORef i)                         >>= n
-        GetState (Mutable a) n      -> liftIO (readIORef a)                                    >>= n
-        GetRandom bnds n            -> liftIO (randomRIO bnds)                                 >>= n
-        EscapeTheSystem io n        -> liftIO io                                               >>= n
-        TraceStr v str n            -> trace v str                                             >>  n
-        GetSelf n                   -> n =<< asks self
+  runF :: SystemF (Core a) -> Core a
+  runF = \case
+    ProtocolBoundary i p n      -> interpProtocol i p                                      >>  n
+    UponEvent x impl n          -> registerHandler x (\a ->
+                                   traceStr 3 ("Handling " ++ show x) >> impl a)           >>  n
+    TriggerEvent x e n          -> trace 4 ("Triggering " ++ show x)  >> queueEvent x e    >>  n
+    SetupTimer tt evt timer n   -> trace' "Setting up " evt  >> startTimer tt evt timer    >>  n
+    CancelTimer evt n           -> trace' "Handling " evt    >> stopTimer evt              >>  n
+    ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b)                               >>  n
+      -- no need for atomic, handlers in the same protocol run atomically and
+      -- never concurrently... though if you share state across protocols there could be race conditions.
+      -- ToDo: Just use an MVar, or atomicModifyIORef'(if the documentation about its problem is incorrect), better to.
+    MkNew i n                   -> liftIO (Mutable <$> newIORef i)                         >>= n
+    GetState (Mutable a) n      -> liftIO (readIORef a)                                    >>= n
+    GetRandom bnds n            -> liftIO (randomRIO bnds)                                 >>= n
+    EscapeTheSystem io n        -> liftIO io                                               >>= n
+    TraceStr v str n            -> trace v str                                             >>  n
+    GetSelf n                   -> n =<< asks self
 
-      trace' kw x = trace 3 (kw ++ show x)
-         -- we could automatically show the argument if we required `Show`.
-
-  iterM runF sys
+  trace' kw x = trace 3 (kw ++ show x)
 
 -- | The core worker reads messages from the event queue and delegates them to
 -- the appropriate handler.
@@ -117,7 +118,7 @@ worker = Core \cd -> do
       Nothing ->
         {- message ignored -}
         traceInternal cd $
-          "Ignored event " ++ show e ++ " given handlers " ++ show (M.toList handlers)
+          "Ignored event " ++ show e -- ++ " given handlers " ++ show (M.toList handlers)
       Just hs -> do
         -- Run all handlers with the same message by passing them to the appropriate executor
         forM_ hs \(exectx, H h) -> do
@@ -132,18 +133,18 @@ registerHandler evt f = Core \cd -> do
   traceInternal cd $ "Registering handler for " ++ show evt
   let ek = EK evt
       h  = H $ (`unCore` cd) . interpSystem <$> f
-  modifyIORef' cd.handlers (M.insertWith (<>) ek [(cd.inProto,h)])
+  -- Multiple
+  atomicModifyIORef' cd.handlers ((,()) . M.insertWith (<>) ek [(cd.inProto,h)])
 
   -- Handlers registered for Messages must also store the decoder function (see
   -- 'MsgDecoders') since messages come from the network with a type fingerprint only.
   case evt of
     Message{tyId} -> do {- matching on Message gives us a Binary instance for @t@ -}
-      modifyIORef' cd.msgDecoders (M.insert tyId (MDEC @t Dict))
+      modifyMVar_ cd.msgDecoders (pure . M.insert tyId (MDEC @t Dict))
         -- insert may override the existing decoder if multiple handlers for the
         -- same message are defined, but this is fine since the decoder will always
         -- be the same (the Binary instance decoder)
     _ -> pure ()
-
 
 queueEvent :: Event t -> t -> Core ()
 queueEvent evt t = Core \cd ->
@@ -161,8 +162,8 @@ startTimer tt evt@(Timer tr) timer = Core \cd -> do
   let
     -- Even though this timer may have been started within a particular protocol, any other protocol can register a handler for it.
     -- To preserve some symmetry, the handler that cancels the timer shall be excuted in the top-level executor
-    registerCancelTimerH tid = modifyIORef' cd.handlers (M.insertWith (<>) (EK (StopTimer tr)) [(TopLevel, cancelTimerThread tid)])
-      
+    registerCancelTimerH tid = atomicModifyIORef' cd.handlers ((,()) . M.insertWith (<>) (EK (StopTimer tr)) [(TopLevel, cancelTimerThread tid)])
+
   case tt of
     OneShotTimer -> do
       tid <- forkIO $ do
@@ -224,7 +225,7 @@ traceIO v str verb ctx = do
     liftIO (putStrLn (show time ++ ": (" ++ ctx ++ ") " ++ str))
 
 internalVerbosity :: Verbosity
-internalVerbosity = 4
+internalVerbosity = 5
 
 --------------------------------------------------------------------------------
 -- * Network
@@ -250,11 +251,17 @@ initTcpManager v hostname port decoders coreMsgQ = do
   let netTrace s = traceIO internalVerbosity s v "Network"
 
   -- todo: getAddr. For now, use localhost on different ports
-  Right transport <- N.createTransport (N.defaultTCPAddr hostname (show port)) N.defaultTCPParameters
-  Right endpoint <- N.newEndPoint transport
+  transport <- either (error . show) id <$>
+    N.createTransport (N.defaultTCPAddr hostname (show port)) N.defaultTCPParameters
+  endpoint <- either (error . show) id <$>
+    N.newEndPoint transport
 
   -- Write outgoing messages to me, and I'll send them!
   outgoingMsgs <- newChan
+
+  -- Keep some state on incoming and outgoing messages to flag the right events
+  -- and reuse connections
+  outConns <- newIORef M.empty
 
   -- Incoming side (receives connections)
   _ <- forkIO $ forever $ do
@@ -263,9 +270,9 @@ initTcpManager v hostname port decoders coreMsgQ = do
       N.Received _ [payload] -> do
         traceIO (internalVerbosity+1) ("Received message over the wire " ++ show payload) v "Network"
         let NetworkMessage{tyId, tyStr, msgPayload} = ndecode payload
-        M.lookup tyId <$> readIORef decoders >>= \case
+        M.lookup tyId <$> readMVar decoders >>= \case
           Nothing ->
-            netTrace $ "No decoder found for " ++ show tyStr ++ ". Ignoring message..."
+            netTrace $ "No handler/decoder found for " ++ show tyStr ++ ". Ignoring message..."
           Just (MDEC @et dict) -> withDict dict $
             case decodeOrFail $ fromStrict msgPayload of
               Left (full, _, err) ->
@@ -276,57 +283,72 @@ initTcpManager v hostname port decoders coreMsgQ = do
                 writeChan coreMsgQ (Msg (Message @et tyId tyStr) msg)
       N.Received _ m ->
         netTrace $ "Unexpected message content: " ++ show m
-
-      N.ConnectionClosed e ->
-        -- todo: can this detect outgoing down? or incoming down?
-        netTrace ("TODO: Out/InnConnDown connection closed " ++ show e)
-      N.ConnectionOpened _ _ ep -> do
+      N.ConnectionOpened _ _ ep ->
         -- Flag in connection up
         writeChan coreMsgQ (Msg (ChannelEvt (typeRep @InConnUp)) InConnUp{from = Host ep})
-      N.ReceivedMulticast{} -> do
+      N.ReceivedMulticast{} ->
         netTrace "Ignoring received multicast"
-        pure () -- do nothing
-      N.EndPointClosed -> do
+      N.EndPointClosed ->
         netTrace "Endpoint closed?"
-        pure () -- ok
+      N.ConnectionClosed i ->
+        netTrace ("Connection closed cleanly " ++ show i ++ ", but closing a connection cleanly should only happen for outgoing connections to nodes which have closed the incoming connection already! Not flagging any channel event, please report a bug :)")
+      N.ErrorEvent (N.TransportError (N.EventConnectionLost addr) _) -> do
+        -- Flag that we lost an incoming connection
+        writeChan coreMsgQ (Msg (ChannelEvt (typeRep @InConnDown)) InConnDown{from=Host addr})
+        -- Drop an outgoing connection to this node if one exists:
+        M.lookup (Host addr) <$> readIORef outConns >>= \case
+          Nothing -> pure ()
+          Just conn -> do
+            N.close conn
+            atomicModifyIORef' outConns ((,()) . M.delete (Host addr))
+            writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnDown)) OutConnDown{to=Host addr})
       N.ErrorEvent e -> do
-        -- ToDo: I suppose we'll need a set of outgoing and incoming
-        -- connections, and when one of them drops here, we look it up and flag
-        -- appropriately (in a separate io thread?).
         netTrace ("Unexpected error event " ++ show e)
 
   -- Outgoing side (starts connections)
   _ <- forkIO $ forever $ do
     Msg (Message msgTyFP msgTyStr) msg <- readChan outgoingMsgs
-    N.connect endpoint msg.to.addr N.ReliableOrdered N.defaultConnectHints {-todo: set timeout in hints ? -}
-      >>= \case
-        Left err ->
-          -- Flag out connection failed
-          writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnFailed)) OutConnFailed{ err, to=msg.to })
-        Right outConn -> do
-          -- Flag channel up
-          writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnUp)) OutConnUp{to = msg.to})
-          -- We could store outConn in the map and kind of manage it, but these
-          -- connections are supposed to be very light, so there's no need to
-          -- cache them in any way unless proven otherwise.
-          let payload = nencode $ NetworkMessage msgTyFP msgTyStr (nencode msg)
-          traceIO (internalVerbosity+1) ("Sending message over the wire " ++ show payload) v "Network"
-          N.send outConn [payload]
-            >>= \case
-              Left e -> netTrace ("Unexpected error when sending message " ++ show e)
-              Right () -> pure ()
+
+    let
+      sendMessage outConn = do
+        let payload = nencode $ NetworkMessage msgTyFP msgTyStr (nencode msg)
+        traceIO (internalVerbosity+1) ("Sending message over the wire " ++ show payload) v "Network"
+        N.send outConn [payload]
+          >>= \case
+            Left e -> netTrace ("Unexpected error when sending message " ++ show e)
+            Right () -> pure ()
+
+    M.lookup msg.to <$> readIORef outConns >>= \case
+      Just outConn -> sendMessage outConn
+      Nothing ->
+        N.connect endpoint msg.to.addr N.ReliableOrdered N.defaultConnectHints {-todo: set timeout in hints ? -}
+          >>= \case
+            Left err ->
+              -- Flag out connection failed
+              writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnFailed)) OutConnFailed{ err, to=msg.to })
+            Right outConn -> do
+              -- Store connection
+              -- (non-atomic, this is the only thread modifying this ref)
+              modifyIORef' outConns (M.insert msg.to outConn)
+              -- Flag channel up
+              writeChan coreMsgQ (Msg (ChannelEvt (typeRep @OutConnUp)) OutConnUp{to = msg.to})
+              -- Send it!
+              sendMessage outConn
 
   return (Host (N.address endpoint), outgoingMsgs)
 
--- other channel protocols (e.g. UDP) are not supported
+-- ToDo: Implement some failure detection mechanism that detects InConnDown
+-- besides disconnects (say, timeout)? I think we can automatically do this by
+-- providing a connectionHint with a timeout, then the connection should
+-- timeout automatically
+
+data NetworkMessage = NetworkMessage { tyId :: Fingerprint, tyStr :: String, msgPayload :: ByteString } deriving (Generic, Binary)
 
 nencode :: Binary a => a -> ByteString
 nencode = toStrict . encode
 
 ndecode :: Binary a => ByteString -> a
 ndecode = decode . fromStrict
-
-data NetworkMessage = NetworkMessage { tyId :: Fingerprint, tyStr :: String, msgPayload :: ByteString }
 
 --------------------------------------------------------------------------------
 -- * Core datatypes
@@ -374,15 +396,20 @@ data CoreData = CoreData
 -- a decoder function whose result we can "safely" unsafe coerce into the
 -- argument expected by the handler for the message whose type has that same
 -- fingerprint.
-type MsgDecoders = IORef (Map Fingerprint MsgDecoder)
+--
+-- MsgDecoders use an MVar because I noticed something weird about atomicity
+-- with multiple IORefs at the same time in the documentation of `modifyIORef`,
+-- so to avoid problems just use MVar for these.
+--
+-- ToDo: Change to IORef and do atomicModifyIORef' if safe on multiple vars? or
+-- just keep as MVar(and perhaps change others?)
+type MsgDecoders = MVar (Map Fingerprint MsgDecoder)
 data MsgDecoder = forall a. MDEC (Dict (HasField "to" a Host, Binary a))
 
 -- | An event is its own key, but the type is preserved in the type-rep field only.
 data EventKey = forall t. EK (Event t)
 
 newtype Sync = Sync (MVar ())
-
--- data CoreConfig = CoreConfig { channel type, verbosity, ... }
 
 --------------------------------------------------------------------------------
 -- * Instances
@@ -422,5 +449,3 @@ instance Ord EventKey where
       (Indication n1 r1, Indication n2 r2) -> n1 `compare` n2 <> SomeTypeRep r1 `compare` SomeTypeRep r2
       (_, _) -> I# (dataToTag# a) `compare` I# (dataToTag# b)
 
-deriving instance Generic NetworkMessage
-deriving instance Binary NetworkMessage
