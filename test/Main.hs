@@ -1,16 +1,16 @@
-{-# LANGUAGE BlockArguments, TypeApplications, RebindableSyntax #-}
+{-# LANGUAGE BlockArguments, TypeApplications, RebindableSyntax, DeriveGeneric, DeriveAnyClass #-}
 module Main (main) where
 
-import System.Spec
+import System.Distributed.Prelude
 
 main :: IO ()
 main = putStrLn "All typechecks!"
 
 --------------------------------------------------------------------------------
 
-newtype UUID = UUID Int deriving (Eq, Ord)
-data Bytes
-data FloodMessage = FM Host UUID Host Bytes
+newtype UUID = UUID Int deriving (Eq, Ord, Generic, Binary)
+data Bytes deriving (Generic, Binary)
+data FloodMessage = FM { to :: Host, i :: UUID, o :: Host, bs :: Bytes } deriving (Generic, Binary)
 
 
 {-= Interface =-}
