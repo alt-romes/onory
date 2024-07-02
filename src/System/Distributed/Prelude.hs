@@ -62,6 +62,15 @@ class Container a where
   type Elem a :: Type
   type Key  a :: Type
   type ImmutableCR a :: Type
+  -- | For each element in a collection
+  --
+  -- @
+  -- myset <- 'new' Set
+  -- myset '+=' (1::Int)
+  -- myset '+=' (2::Int)
+  -- 'foreach' myset \elem -> do
+  --   'print' elem
+  -- @
   foreach :: a -> (Elem a -> System b) -> System ()
   (+=) :: a -> Elem a -> System a
   (-=) :: a -> Key a  -> System a
