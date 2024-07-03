@@ -10,14 +10,7 @@ import System.Distributed.Prelude
 default (Int)
 
 main :: IO ()
-main = do
-  runOnory [P hyParView]
-  -- alternatively
-  -- getArgs >>= \case
-  --   [port, contactPort] ->
-  --     runSystem SysConf{verbosity=5, hostname="127.0.0.1", port=read port} do
-  --       hyParView (HPVC 10 100 10 10 10000 5 5 5 (host "127.0.0.1" (read contactPort)))
-  --   _ -> error "Usage: ./Main <port> <contact port>"
+main = runOnory [P hyParView]
 
 --------------------------------------------------------------------------------
 -- Interface
@@ -28,26 +21,26 @@ neighbourDown = indication @Host "neighbourDown"
 --------------------------------------------------------------------------------
 -- Configuration
 
-data HyParViewConf w =
+data HyParViewConf arg =
   HPVC
-    { maxSizeActiveView :: w ::: Int
+    { maxSizeActiveView :: arg ::: Int
         <?> "The max size of the active view"
-    , maxSizePassiveView :: w ::: Int
+    , maxSizePassiveView :: arg ::: Int
         <?> "The max size of the passive view"
-    , actRWL :: w ::: Int
+    , actRWL :: arg ::: Int
         <?> "Active Random Walk Length"
-    , passRWL :: w ::: Int
+    , passRWL :: arg ::: Int
         <?> "Passive Random Walk Length"
-    , shuffleTimer :: w ::: Int
+    , shuffleTimer :: arg ::: Int
         <!> "10000"
         <?> "Time in millis to trigger the event for passive view management (SHUFFLE)"
-    , shuffleKa :: w ::: Int
+    , shuffleKa :: arg ::: Int
         <?> "The number of nodes from the active view sent in a Shuffle message."
-    , shuffleKp :: w ::: Int
+    , shuffleKp :: arg ::: Int
         <?> "The number of nodes from the passive view sent in a Shuffle message."
-    , shuffleTtl :: w ::: Int
+    , shuffleTtl :: arg ::: Int
         <?> "The ttl for shuffle messages."
-    , contactNode :: w ::: Host
+    , contactNode :: arg ::: Host
         <#> "c"
         <?> "The contact node"
     }
@@ -235,7 +228,4 @@ data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, node
 data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Host, replyNodes :: Set Host} deriving (Generic, Binary)
 
 data ShuffleTimer = ShuffleTimer{ time :: Int, repeat :: Int}
-
---------------------------------------------------------------------------------
--- Helpers
 
