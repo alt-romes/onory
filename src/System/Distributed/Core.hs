@@ -8,7 +8,9 @@ module System.Distributed.Core where
 
 import GHC.Fingerprint
 import GHC.Records
+import GHC.TypeLits
 import Data.Binary
+import Data.Proxy
 import Data.String
 import Type.Reflection
 import Data.Typeable (typeRepFingerprint)
@@ -25,8 +27,8 @@ request name = Request name (typeRep @req)
 indication :: ∀ ind. Typeable ind => Name -> Event ind
 indication name = Indication name (typeRep @ind)
 
-protocol :: Name -> Protocol -> System ()
-protocol = protocolBoundary
+protocol :: ∀ name a. KnownSymbol name => System a -> Protocol name
+protocol s = protocolBoundary (symbolVal (Proxy @name)) s >> return (Proxy @name)
 
 self :: System Host
 self = getSelf

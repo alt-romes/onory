@@ -1,16 +1,18 @@
 {-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds,
    TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash,
-   DuplicateRecordFields, RecordWildCards, DeriveAnyClass #-}
+   DuplicateRecordFields, RecordWildCards, DeriveAnyClass, ImpredicativeTypes,
+   PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant <$>" #-}
 module System.Distributed.Interpret
-  ( runLebab, runProtocols, runSystem, runCore, interpSystem, wait, SysConf(..)
+  ( runOnory, runSystem, runCore, interpSystem, wait, SysConf, SysConf'(..), P(..)
   ) where
 
 import GHC.Exts (dataToTag#, Int(I#))
 import GHC.Fingerprint (Fingerprint)
 import GHC.Records
 import GHC.Generics
+import GHC.TypeLits
 import Data.Binary (Binary, encode, decode, decodeOrFail)
 import Data.Constraint
 import Data.IORef
@@ -28,16 +30,36 @@ import Unsafe.Coerce (unsafeCoerce)
 import System.Random (randomRIO)
 import Data.Time.Clock (getCurrentTime)
 import Data.ByteString (ByteString, toStrict, fromStrict)
+import Options.Applicative (execParser, info, fullDesc)
+import Options.Generic
 import System.Distributed.Free
+import qualified Data.Char as C
+import Data.Proxy
+import Data.Traversable (for)
 
 --------------------------------------------------------------------------------
 -- * Runners
 
--- | Run multiple protocols concurrently in harmony
-runLebab, runProtocols :: SysConf -> [Protocol] -> IO ()
-runLebab = runProtocols
-runProtocols conf protos = do
-  sync <- runCore conf $ interpSystem $ sequence protos
+-- | Run multiple protocols concurrently in harmony, where the configuration
+-- for each protocol is parsed from the command line invocation.
+--
+-- The program when run reads the configuration for the System as a whole
+-- ('SysConf') and the configuration for each protocol from the command
+-- line interface which are derived automatically from the datatype (run with
+-- @--help@ to see the available options).
+runOnory :: [P] -> IO ()
+runOnory protos = do
+  let
+    -- Parse SysConf and the configuration record for every protocol
+    parser = (,) <$>
+      parseRecordWithModifiers @(SysConf' Wrapped) (mods (Proxy @"sys")) <*>
+      for protos (\(P @conf @name p) -> do
+        SomeP . p . unwrap <$> parseRecordWithModifiers @(conf Wrapped) (mods (Proxy @name)))
+      -- NB: Merging all these generic parsers means we will get multiple "-h" options. Fine.
+    mods p =
+      lispCaseModifiers {fieldNameModifier = ((map C.toLower (symbolVal p) ++ "-") ++) . lispCaseModifiers.fieldNameModifier}
+  (conf, instProtos) <- execParser (info parser fullDesc)
+  sync <- runCore (unwrap conf) $ interpSystem $ mapM (\(SomeP p) -> void p) instProtos
   wait sync
 
 runSystem :: SysConf -> System a -> IO ()
@@ -45,13 +67,26 @@ runSystem c s = do
   sync <- runCore c $ interpSystem s
   wait sync -- `onCtrlC` closeTransport transport
 
-data SysConf = SysConf
-  { verbosity :: Verbosity
-  , hostname :: String
-  -- ^ The IP that other nodes will use to connect to it is greatly preferred,
-  -- since this allows network-protocol-tcp to re-use the connection.
-  , port :: Int
+type SysConf = SysConf' Unwrapped
+data SysConf' w = SysConf
+  { verbosity :: w ::: Verbosity
+      <!> "1" <?> "The system verbosity. Verbosity=3 traces every handler that gets run. Verbosity=4 traces also all triggers. Verbosity=5 traces also system-level information. Verbosity=6 traces even more system-level information, like the bytes being sent through the network on an message."
+  , hostname  :: w ::: String <!> "127.0.0.1" <?> "The local hostname to bind this system too. Ideally, this should be the name other nodes will use to connect to it."
+    -- ^ The IP that other nodes will use to connect to it is greatly preferred,
+    -- since this allows network-protocol-tcp to re-use the connection.
+  , port      :: w ::: Int    <#> "p" <?> "The port to run this system on."
   }
+  deriving (Generic)
+
+-- | A protocol which 
+data P = forall c name. ( GenericParseRecord (Rep (c Wrapped))
+                        , Unwrappable c
+                        , KnownSymbol name )
+                        => P (c Unwrapped -> Protocol name)
+-- pattern P 
+-- pattern P x <- P' x
+--   where P = P' . unwrap
+data SomeP = forall name. SomeP (Protocol name)
 
 --------------------------------------------------------------------------------
 -- * Interpreter
@@ -192,7 +227,7 @@ cancelTimerThread :: ThreadId -> Handler
 cancelTimerThread tid = H $ \_ -> killThread tid
 
 -- | Basically 'interpSystem', but sets the (new) protocol executor in the local env
-interpProtocol :: Name -> Protocol -> Core ()
+interpProtocol :: Name -> System a -> Core ()
 interpProtocol name proto = do
   protoExec <- liftIO newExecutor
   local (\cd -> case cd.inProto of

@@ -1,10 +1,9 @@
 -- ROMES:TODO: Pass these options in the GHC wrapper automatically.
-{-# LANGUAGE LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields, DeriveGeneric, DeriveAnyClass #-}
+{-# LANGUAGE LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields, DeriveGeneric, DeriveAnyClass, DataKinds #-}
 {-# OPTIONS_GHC -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
 module Main where
 
-import System.Environment (getArgs)
 import System.Distributed.Interpret
 import System.Distributed.Prelude
 
@@ -12,25 +11,24 @@ default (Int)
 
 main :: IO ()
 main = do
-  getArgs >>= \case
-    [port, contactPort] ->
-      runLebab SysConf{verbosity=5, hostname="127.0.0.1", port=read port}
-        [ hyParView (HPVC 10 100 10 10 10000 5 5 5) (host "127.0.0.1" (read contactPort))
-        ]
-    _ -> error "Usage: ./Main <port> <contact port>"
-
-type Node = Host
+  runOnory [P hyParView]
+  -- alternatively
+  -- getArgs >>= \case
+  --   [port, contactPort] ->
+  --     runSystem SysConf{verbosity=5, hostname="127.0.0.1", port=read port} do
+  --       hyParView (HPVC 10 100 10 10 10000 5 5 5 (host "127.0.0.1" (read contactPort)))
+  --   _ -> error "Usage: ./Main <port> <contact port>"
 
 --------------------------------------------------------------------------------
 -- Interface
 
-neighbourUp   = indication @Node "neighbourUp"
-neighbourDown = indication @Node "neighbourDown"
+neighbourUp   = indication @Host "neighbourUp"
+neighbourDown = indication @Host "neighbourDown"
 
 --------------------------------------------------------------------------------
 -- Configuration
 
-data HyParViewConf =
+data HyParViewConf w =
   HPVC
     { maxSizeActiveView :: Int -- ^ The max size of the active view
     , maxSizePassiveView :: Int -- ^ The max size of the passive view
@@ -40,14 +38,17 @@ data HyParViewConf =
     , shuffleKa :: Int -- ^ The number of nodes from the active view sent in a Shuffle message.
     , shuffleKp :: Int -- The number of nodes from the passive view sent in a Shuffle message.
     , shuffleTtl :: Int -- The ttl for shuffle messages.
+    , contactNode :: Host -- ^ The contact node
     }
+    deriving Generic
 
 --------------------------------------------------------------------------------
 -- Protocol
 
 -- Paper: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 -- Pseudo code: https://github.com/alt-romes/projeto-asd/blob/master/pseudo-code/HyParView.c#L89
-hyParView HPVC{..} contactNode = protocol "HyParView" do
+hyParView :: HyParViewConf Unwrapped -> Protocol "HyParView"
+hyParView HPVC{..} = protocol @"HyParView" do
   puts "Starting HyParView..."
   myself <- self
   puts ("I am " ++ show myself)
@@ -189,8 +190,8 @@ hyParView HPVC{..} contactNode = protocol "HyParView" do
   upon timer \ShuffleTimer{time} -> do
 
     when (size activeView > (0 :: Int)) do
-      activeViewNodes :: Set Node <- randomSubset(activeView, shuffleKa)
-      passiveViewNodes :: Set Node <- randomSubset(passiveView, shuffleKp)
+      activeViewNodes <- randomSubset(activeView, shuffleKa)
+      passiveViewNodes <- randomSubset(passiveView, shuffleKp)
 
       host <- randomElem(activeView)
 
@@ -219,8 +220,8 @@ data JoinReplyMessage   = JoinReplyMessage { from :: Host, to :: Host } deriving
 data DisconnectMessage  = DisconnectMessage { from :: Host, to :: Host } deriving (Generic, Binary)
 data NeighbourMessage   = NeighbourMessage { from :: Host, to :: Host, priority :: Bool } deriving (Generic, Binary)
 data NeighbourReplyMessage = NeighbourReplyMessage { from :: Host, to :: Host, accepted :: Bool } deriving (Generic, Binary)
-data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, nodes :: Set Node} deriving (Generic, Binary)
-data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Node, replyNodes :: Set Node} deriving (Generic, Binary)
+data ShuffleMessage = ShuffleMessage{ from :: Host, to :: Host, ttl :: Int, nodes :: Set Host} deriving (Generic, Binary)
+data ShuffleReplyMessage = ShuffleReplyMessage{ to :: Host, receivedNodes :: Set Host, replyNodes :: Set Host} deriving (Generic, Binary)
 
 data ShuffleTimer = ShuffleTimer{ time :: Int, repeat :: Int}
 

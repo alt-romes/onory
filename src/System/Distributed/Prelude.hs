@@ -5,12 +5,14 @@ module System.Distributed.Prelude
   ( module System.Distributed.Core
   , module System.Distributed.Prelude
   -- re-exports, for now at the end.
-  , Host, System, Set, Map
+  , Host, System, Protocol, Set, Map
 
   -- re-export Prelude, hiding the functions we override.
   -- Importers should use no implicit prelude
   , module Prelude
-  , Generic, Binary
+  , Generic {-ParseRecord: we need only Generic for confs-}
+  , Binary
+  , type (<?>), type (<!>), type (<#>), Unwrapped
   )
   where
 
@@ -23,6 +25,7 @@ import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
+import Options.Generic (type (<?>), type (<!>), type (<#>), Unwrapped)
 
 import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
                       , all, any, filter

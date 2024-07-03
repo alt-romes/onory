@@ -5,6 +5,7 @@ import GHC.Fingerprint
 import GHC.Records
 import Data.Binary
 import Data.IORef
+import Data.Proxy
 import Data.String
 import Data.Kind
 import Type.Reflection
@@ -12,7 +13,9 @@ import System.Random (Random)
 import Network.Transport (EndPointAddress(..), TransportError, ConnectErrorCode)
 import qualified Data.ByteString.Char8 as BS8
 import Control.Monad.Free
+-- import Control.Monad.Free.Church (TODO!!)
 import Control.Monad.Free.TH
+import Options.Generic
 
 -- | A distributed system specification
 type System = Free SystemF
@@ -35,7 +38,7 @@ type System = Free SystemF
 -- 'protocolBoundary' (or 'protocol' from 'System.Distributed.Core'). Declaring
 -- the boundary of the protocol allows it to be treated as a unit which can run
 -- in parallel to other protocols.
-type Protocol = System ()
+type Protocol name = System (Proxy name)
 
 -- | Not /that/ SystemF.
 --
@@ -43,7 +46,7 @@ type Protocol = System ()
 data SystemF next where
 
   ProtocolBoundary
-    :: Name -> Protocol -> next -> SystemF next
+    :: Name -> System a -> next -> SystemF next
 
   UponEvent
     :: Event et -> (et -> System a) -> next -> SystemF next
@@ -165,3 +168,9 @@ instance Show Host where
 instance IsString Host where
   fromString = Host . EndPointAddress . fromString . (++ ":0")
     -- invariant: the nodes always use a single endpoint no 0
+
+instance ParseRecord Host where
+  parseRecord = fmap getOnly parseRecord
+
+instance ParseFields Host where
+  parseFields hm fl sn dv = fromString <$> parseFields hm fl sn dv
