@@ -12,7 +12,8 @@ module System.Distributed.Prelude
   , module Prelude
   , Generic {-ParseRecord: we need only Generic for confs-}
   , Binary
-  , type (<?>), type (<!>), type (<#>), Unwrapped
+  -- re-export optparse-generic niceties
+  , type (<?>), type (<!>), type (<#>), type (:::), Unwrapped
   )
   where
 
@@ -25,7 +26,7 @@ import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
-import Options.Generic (type (<?>), type (<!>), type (<#>), Unwrapped)
+import Options.Generic (type (<?>), type (<!>), type (<#>), type (:::), Unwrapped)
 
 import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
                       , all, any, filter

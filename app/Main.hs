@@ -30,15 +30,26 @@ neighbourDown = indication @Host "neighbourDown"
 
 data HyParViewConf w =
   HPVC
-    { maxSizeActiveView :: Int -- ^ The max size of the active view
-    , maxSizePassiveView :: Int -- ^ The max size of the passive view
-    , actRWL :: Int -- ^ Active Random Walk Length
-    , passRWL :: Int -- ^ Passive Random Walk Length
-    , shuffleTimer :: Int -- ^ Time in millis to trigger the event for passive view management (SHUFFLE)
-    , shuffleKa :: Int -- ^ The number of nodes from the active view sent in a Shuffle message.
-    , shuffleKp :: Int -- The number of nodes from the passive view sent in a Shuffle message.
-    , shuffleTtl :: Int -- The ttl for shuffle messages.
-    , contactNode :: Host -- ^ The contact node
+    { maxSizeActiveView :: w ::: Int
+        <?> "The max size of the active view"
+    , maxSizePassiveView :: w ::: Int
+        <?> "The max size of the passive view"
+    , actRWL :: w ::: Int
+        <?> "Active Random Walk Length"
+    , passRWL :: w ::: Int
+        <?> "Passive Random Walk Length"
+    , shuffleTimer :: w ::: Int
+        <!> "10000"
+        <?> "Time in millis to trigger the event for passive view management (SHUFFLE)"
+    , shuffleKa :: w ::: Int
+        <?> "The number of nodes from the active view sent in a Shuffle message."
+    , shuffleKp :: w ::: Int
+        <?> "The number of nodes from the passive view sent in a Shuffle message."
+    , shuffleTtl :: w ::: Int
+        <?> "The ttl for shuffle messages."
+    , contactNode :: w ::: Host
+        <#> "c"
+        <?> "The contact node"
     }
     deriving Generic
 
