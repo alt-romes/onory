@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds,
-   TypeFamilies, TypeAbstractions, BlockArguments, LambdaCase, MagicHash,
+   TypeFamilies, BlockArguments, LambdaCase, MagicHash,
    DuplicateRecordFields, RecordWildCards, DeriveAnyClass, ImpredicativeTypes,
    PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}

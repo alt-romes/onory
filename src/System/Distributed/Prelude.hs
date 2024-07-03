@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, TypeAbstractions, BlockArguments, FunctionalDependencies #-}
+{-# LANGUAGE LambdaCase, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, BlockArguments, FunctionalDependencies #-}
 {-# LANGUAGE UndecidableInstances #-} -- Eq a => SEq a et friends
 -- todo: explicit export list of whole language features
 module System.Distributed.Prelude
