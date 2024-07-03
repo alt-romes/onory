@@ -11,4 +11,4 @@
     specification is automatically able to parse protocol
     configuration options from the command line interface, and
     trace all events being triggered and handled by the running
-    protocol.
+    protocol, making experimentation easy.
