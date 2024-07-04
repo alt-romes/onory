@@ -1,16 +1,7 @@
--- ROMES:TODO: Pass these options in the GHC wrapper automatically.
-{-# LANGUAGE LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments, NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields, DeriveGeneric, DeriveAnyClass, DataKinds #-}
-{-# OPTIONS_GHC -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
-module Main where
+module HyParView where
 
-import System.Distributed.Interpret
 import System.Distributed.Prelude
-
-default (Int)
-
-main :: IO ()
-main = runOnory [P hyParView]
 
 --------------------------------------------------------------------------------
 -- Interface

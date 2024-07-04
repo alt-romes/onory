@@ -61,17 +61,25 @@ library
     hs-source-dirs:   src
     default-language: GHC2021
 
-executable psimulate
-    import:           warnings
 -- romes:todo: do I have to compile with -threaded?
+
+-- Replicated State Machine
+executable rsm
+    import:           warnings
     main-is:          Main.hs
-    -- other-modules:
-    -- other-extensions:
+    other-modules:    HyParView
+    default-extensions:
+        LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments,
+        NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields,
+        DeriveGeneric, DeriveAnyClass, DataKinds
+    ghc-options:
+        -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing
+        -Wno-unrecognised-pragmas
     build-depends:
         base, containers,
         onory
 
-    hs-source-dirs:   app
+    hs-source-dirs:   examples/rsm
     default-language: GHC2021
 
 test-suite onory-test
