@@ -1,0 +1,46 @@
+#!/bin/sh
+if test -z "$1"; then
+    echo "Usage: onoryc <System.hs>"
+    exit 1
+fi
+
+# The onory compiler: $VERSION
+VERSION=0.1
+if test "$1" = "-v" -o "$1" = "--version"; then
+    echo "$VERSION"
+    exit 0
+fi
+
+GHC_VERSION=$(ghc --numeric-version)
+if ! test "$GHC_VERSION" = "9.8.2" -o "$GHC_VERSION" = "9.4.8"; then
+    echo "Warning: GHC versions tested are 9.4.8 and 9.8.2, but got GHC $GHC_VERSION"
+fi
+
+# If $ONORY_TMP is already set and the environment file exists, skip setting it up.
+if ! test -f "$ONORY_TMP/onory.env"; then
+    ONORY_TMP="$(mktemp -d)"
+
+    echo "Setting up dependencies..."
+    echo "Run the following command to re-use the onory library dependency in subsequent runs in this session:"
+    echo
+    echo "export ONORY_TMP=$ONORY_TMP"
+    echo
+
+    # Subprocess cds into $ONORY_TMP and sets up the package env.
+    ( cd "$ONORY_TMP" || exit 1
+        ARCHIVE=https://github.com/alt-romes/onory/archive/refs/heads/main.tar.gz
+        curl -s -L "$ARCHIVE" | tar xvz > /dev/null
+        cd onory-main || (echo "Something went wrong when downloading" && exit 1)
+        cabal install lib:onory --lib --package-env "$ONORY_TMP/onory.env" >/dev/null
+    )
+fi
+
+GHC_OPTIONS="-XLambdaCase -XRecordWildCards -XOverloadedRecordDot -XBlockArguments -XNoImplicitPrelude \
+             -XRebindableSyntax -XDuplicateRecordFields -XDeriveGeneric -XDeriveAnyClass -XDataKinds \
+             -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas"
+
+# Compile the system
+ghc $GHC_OPTIONS -package-env "$ONORY_TMP/onory.env" "$@"
+
+echo "System compiled sucessfully. Execute it with ./Main -p <port>"
+
