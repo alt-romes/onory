@@ -141,7 +141,7 @@ instance Functor SystemF where
     TraceStr i s n -> TraceStr i s (f n)
     EscapeTheSystem io n -> EscapeTheSystem io (f . n)
 
--- Make me a monad... for free!
+-- Make me monadic actions for the free monad!
 $(makeFree ''SystemF)
 
 --------------------------------------------------------------------------------

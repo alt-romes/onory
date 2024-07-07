@@ -1,7 +1,10 @@
 {-# LANGUAGE OverloadedRecordDot, DerivingVia, UnicodeSyntax, DataKinds,
    TypeFamilies, BlockArguments, LambdaCase, MagicHash,
    DuplicateRecordFields, RecordWildCards, DeriveAnyClass, ImpredicativeTypes,
-   PatternSynonyms #-}
+   PatternSynonyms, CPP #-}
+#if __GLASGOW_HASKELL__ >= 908
+{-# LANGUAGE TypeAbstractions #-}
+#endif
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant <$>" #-}
 module System.Distributed.Interpret
@@ -52,7 +55,7 @@ runOnory protos = do
   let
     -- Parse SysConf and the configuration record for every protocol
     parser = (,) <$>
-      parseRecordWithModifiers @(SysConf' Wrapped) (mods (Proxy @"sys")) <*>
+      parseRecordWithModifiers @(SysConf' Wrapped) lispCaseModifiers <*>
       for protos (\(P @conf @name p) -> do
         SomeP . p . unwrap <$> parseRecordWithModifiers @(conf Wrapped) (mods (Proxy @name)))
       -- NB: Merging all these generic parsers means we will get multiple "-h" options. Fine.
@@ -70,7 +73,7 @@ runSystem c s = do
 type SysConf = SysConf' Unwrapped
 data SysConf' w = SysConf
   { verbosity :: w ::: Verbosity
-      <!> "1" <?> "The system verbosity. Verbosity=3 traces every handler that gets run. Verbosity=4 traces also all triggers. Verbosity=5 traces also system-level information. Verbosity=6 traces even more system-level information, like the bytes being sent through the network on an message."
+      <#> "V" <!> "1" <?> "The system verbosity. Verbosity=3 traces every handler that gets run. Verbosity=4 traces also all triggers. Verbosity=5 traces also system-level information. Verbosity=6 traces even more system-level information, like the bytes being sent through the network on an message."
   , hostname  :: w ::: String <!> "127.0.0.1" <?> "The local hostname to bind this system too. Ideally, this should be the name other nodes will use to connect to it."
     -- ^ The IP that other nodes will use to connect to it is greatly preferred,
     -- since this allows network-protocol-tcp to re-use the connection.
