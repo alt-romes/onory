@@ -24,7 +24,8 @@ author:             Rodrigo Mesquita
 maintainer:         rodrigo.m.mesquita@gmail.com
 homepage:           https://github.com/alt-romes/onory
 bug-reports:        https://github.com/alt-romes/onory/issues
-tested-with:        GHC == 9.8.2, GHC == 9.4.8, GHC == 9.10.1
+tested-with:        GHC == 9.8.2
+                    -- GHC == 9.4.8, GHC == 9.10.1
 copyright:          Copyright (C) 2024 Rodrigo Mesquita
 category:           System
 build-type:         Simple
