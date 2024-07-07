@@ -7,13 +7,15 @@ module System.Distributed.Prelude
   -- re-exports, for now at the end.
   , Host, System, Protocol, Set, Map
 
-  -- re-export Prelude, hiding the functions we override.
-  -- Importers should use no implicit prelude
-  , module Prelude
   , Generic {-ParseRecord: we need only Generic for confs-}
   , Binary
   -- re-export optparse-generic niceties
   , type (<?>), type (<!>), type (<#>), type (:::), Unwrapped
+
+  -- * Prelude re-export
+  -- | For now, we also re-export the rest of the prelude (with the exception
+  -- of the functions we have re-defined).
+  , module Prelude
   )
   where
 
@@ -371,7 +373,7 @@ randomSubset (c, ln) = do
 -- * Utilities
 
 -- | Turn any value into a System one by automatically @return@ing it if
--- needed. The lifted value is `b`.
+-- needed. The lifted value is @b@.
 class LiftS a b | a -> b where
   -- | Not /that/ SystemV.
   -- The value that is lifted in(to) the system.

@@ -1,6 +1,7 @@
 {-# LANGUAGE UnicodeSyntax, PatternSynonyms, DataKinds #-}
 {-# LANGUAGE AllowAmbiguousTypes #-} -- typeFingerprint
--- | The core language for distributed systems design.
+-- | The core embeded language for distributed systems design.
+--
 -- In contrast, the prelude module exports this module plus the kitchen sink
 -- and a lot of overloaded operators which may not be suitable in the context
 -- of using this embedded language as proper Haskell.
@@ -21,12 +22,12 @@ import System.Distributed.Free
 --------------------------------------------------------------------------------
 -- * Core
 
--- | Get the 'Host' that this system is running on.
+-- | Get the t'Host' that this system is running on.
 --
 -- @
 -- do
 --  myself <- 'self'
---  'print' myself -- e.g. "127.0.0.1:25565"
+--  'System.Distributed.Core.print' myself -- e.g. "127.0.0.1:25565"
 -- @
 self :: System Host
 self = getSelf
@@ -59,7 +60,7 @@ self = getSelf
 --
 -- proto2 = 'protocol' \@"p2" do
 --   'upon' neighbourUp \\host -> do
---     'print' host
+--     'System.Distributed.Core.print' host
 -- @
 --
 -- == Requests
@@ -138,8 +139,8 @@ self = getSelf
 -- provide the receiving end with the contact to reply to:
 --
 -- @
--- data PingMessage = PingMessage { to :: 'Host', from :: 'Host' } deriving (Generic, 'Binary')
--- data PongMessage = PongMessage { to :: 'Host', from :: 'Host' } deriving (Generic, 'Binary')
+-- data PingMessage = PingMessage { to :: t'Host', from :: t'Host' } deriving (Generic, 'Binary')
+-- data PongMessage = PongMessage { to :: t'Host', from :: t'Host' } deriving (Generic, 'Binary')
 -- @
 --
 -- Note that message datatypes must instance 'Binary', specifying how the data
@@ -199,7 +200,7 @@ self = getSelf
 -- The known channel events are 'outConnUp', 'outConnDown', 'outConnFailed', 'inConnUp', 'inConnDown'.
 --
 -- @
--- 'upon' 'outConnUp' \\'OutConnUp'{to = outto} -> do
+-- 'upon' 'outConnUp' \\ v'OutConnUp'{to = outto} -> do
 --   'puts' ("Successfully established connection to " ++ show outto)
 -- @
 --
@@ -260,7 +261,7 @@ trigger = triggerEvent
 -- int_ref <- new (0::Int)
 -- @
 --
--- See also 'modify', 'get', and ':='.
+-- See also 'modify', 'System.Distributed.Core.get', and ':='.
 new :: a -> System (Mutable a)
 new = mkNew
 
@@ -343,10 +344,10 @@ cancel = cancelTimer
 --
 -- @
 -- random_int <- 'random'(0,255)
--- 'print' random_int -- prints value between 0 and 255 inclusive
+-- 'System.Distributed.Core.print' random_int -- prints value between 0 and 255 inclusive
 -- @
 --
--- You may also be looking for 'randomElem', 'randomElemWith', or 'randomSubset'.
+-- You may also be looking for 'System.Distributed.Prelude.randomElem', 'System.Distributed.Prelude.randomElemWith', or 'System.Distributed.Prelude.randomSubset' from 'System.Distributed.Prelude'.
 random :: Random a => (a, a) -> System a
 random = getRandom
 
@@ -384,7 +385,7 @@ logStr = traceStr
 -- proto2 :: Conf2 -> 'Protocol' "p2"
 -- proto2 conf = 'protocol' \@"p2" do ...
 --
--- main = 'runOnory' ['P' proto1, 'P' proto2]
+-- main = 'System.Distributed.Interpret.runOnory' ['System.Distributed.Interpret.P' proto1, 'System.Distributed.Interpret.P' proto2]
 -- @
 --
 -- A protocol still forms a 'System', so it can also be manually put together
@@ -400,7 +401,7 @@ logStr = traceStr
 --   proto1
 --   proto2
 --
--- main = 'runSystem' 'SysConf'{ verbosity = 1
+-- main = 'System.Distributed.Interpret.runSystem' v'System.Distributed.Interpret.SysConf' { verbosity = 1
 --                         , hostname="127.0.0.1"
 --                         , port=25001 } fullSystem
 -- @
@@ -442,12 +443,12 @@ receive = Message (typeFingerprint @msg) (show (typeRep @msg))
 
 -- | Make a request event from a name and associated content type.
 -- See 'trigger' and 'upon' for examples on how to use 'request'.
-request :: ∀ req. Typeable req => Name -> Event req
+request :: ∀ req. Typeable req => String -> Event req
 request name = Request name (typeRep @req)
 
 -- | Make an indication event from a name and associated content type.
 -- See 'trigger' and 'upon' for examples on how to use 'indication'.
-indication :: ∀ ind. Typeable ind => Name -> Event ind
+indication :: ∀ ind. Typeable ind => String -> Event ind
 indication name = Indication name (typeRep @ind)
 
 -- | A timer event identified by the specific @timer@ datatype, which can be
@@ -462,7 +463,7 @@ timer = Timer (typeRep @timer)
 --
 -- A repeating timer will fire the first time after X milliseconds, and repeat
 -- forever every Y milliseconds (if not 'cancel'ed before).
--- The delay X to fire the timer the first t ime is given by the 'time' field
+-- The delay X to fire the timer the first t ime is given by the @time@ field
 -- in the timer datatype. The repeat delay Y is given by the 'repeat' field in
 -- the timer datatype.
 --
@@ -479,7 +480,7 @@ periodic = PeriodicTimer
 -- | A one-shot timer type. For use in conjunction with 'setup' and 'timer'.
 --
 -- A one-shot timer will fire exactly once (if not 'cancel'ed before).
--- The delay to fire the timer is given by the 'time' field in the timer datatype
+-- The delay to fire the timer is given by the @time@ field in the timer datatype
 --
 -- @
 -- -- Must have the field @time :: Int@ for delay in milliseconds
@@ -511,8 +512,8 @@ modify = modifyState
 -- ...
 --
 -- 'upon' ... \... -> do
---   kn <- 'get' knownNodes
---   'print' kn
+--   kn <- 'System.Distributed.Core.get' knownNodes
+--   'System.Distributed.Core.print' kn
 -- @
 get :: Mutable a -> System a
 get = getState 
@@ -537,7 +538,7 @@ pattern (:=) <- _ {- what does this direction mean -}
 --
 -- @
 -- i <- 'random'(0,255::Int) + (1::Int)
--- 'print' i
+-- 'System.Distributed.Core.print' i
 -- @
 print :: Show a => a -> System ()
 
@@ -556,15 +557,15 @@ trace = logStr 1
 
 -- ** Channel events
 
--- | A known channel even triggered when an outgoing connection is successfully established
+-- | A known channel event triggered when an outgoing connection is successfully established
 outConnUp :: Event OutConnUp
--- | A known channel even triggered when an established outgoing connection is dropped
+-- | A known channel event triggered when an established outgoing connection is dropped
 outConnDown :: Event OutConnDown
--- | A known channel even triggered when an outgoing connection is fails to be established
+-- | A known channel event triggered when an outgoing connection is fails to be established
 outConnFailed :: Event OutConnFailed
--- | A known channel even triggered when an incoming connection is established
+-- | A known channel event triggered when an incoming connection is established
 inConnUp :: Event InConnUp
--- | A known channel even triggered when an established incoming connection is dropped
+-- | A known channel event triggered when an established incoming connection is dropped
 inConnDown :: Event InConnDown
 outConnUp     = ChannelEvt (typeRep @OutConnUp)
 outConnDown   = ChannelEvt (typeRep @OutConnDown)

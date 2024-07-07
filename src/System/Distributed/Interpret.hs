@@ -7,8 +7,23 @@
 #endif
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant <$>" #-}
+-- | A 'System' is a specification. This module provides functions to turn a
+-- 'System' specification into an executable program, namely, 'runOnory' and 'runSystem'.
+--
+-- System specifications are also typically parametrised over a set of configuration parameters.
+-- 'runOnory' further provides the ability to turn a protocol's configuration
+-- options into a command-line interface from which options can be directly
+-- parsed into the execution of the program.
 module System.Distributed.Interpret
-  ( runOnory, runSystem, runCore, interpSystem, wait, SysConf, SysConf'(..), P(..)
+  (
+  -- | 'runOnory' and 'runSystem' are the two main entrypoints for interpreting a 'System'.
+    runOnory, runSystem
+
+  , SysConf, SysConf'(..), P(..)
+
+  -- * Low-level interface
+  -- | You may want to use these primitives for low-level uses of the library.
+  , runCore, interpSystem, wait
   ) where
 
 import GHC.Exts (dataToTag#, Int(I#))
@@ -47,9 +62,11 @@ import Data.Traversable (for)
 -- for each protocol is parsed from the command line invocation.
 --
 -- The program when run reads the configuration for the System as a whole
--- ('SysConf') and the configuration for each protocol from the command
+-- ( t'SysConf' ) and the configuration for each protocol from the command
 -- line interface which are derived automatically from the datatype (run with
 -- @--help@ to see the available options).
+--
+-- See also how to construct a t'P' from a 'Protocol' in t'P'.
 runOnory :: [P] -> IO ()
 runOnory protos = do
   let
@@ -65,12 +82,36 @@ runOnory protos = do
   sync <- runCore (unwrap conf) $ interpSystem $ mapM (\(SomeP p) -> void p) instProtos
   wait sync
 
+-- | Interpret and execute a system given a system configuration.
+-- If you rather want an automatically cli-configurable stack of protocols you
+-- may prefer 'runOnory'.
 runSystem :: SysConf -> System a -> IO ()
 runSystem c s = do
   sync <- runCore c $ interpSystem s
   wait sync -- `onCtrlC` closeTransport transport
 
+-- | A system configuration record with the CLI-relevant additional information dropped.
+-- This means that @verbosity :: Int@, @hostname :: String@, and @port :: Int@.
 type SysConf = SysConf' Unwrapped
+
+-- | A system configuration record with additional information to report
+-- helpful information on @--help@ in the command line interface, specify
+-- command line interface shorter opts, and default values.
+--
+-- Verbosity can be specified using @-V@ if using the command line interface
+-- when using 'System.Distributed.Interpret.runOnory', or in the @verbosity@
+-- field of t'System.Distributed.Interpret.SysConf' when using
+-- 'System.Distributed.Interpret.runSystem'.
+--
+-- === Verbosity levels
+--
+--   0. Log only when using 'System.Distributed.Core.puts' and 'System.Distributed.Core.print'.
+--   1. Log additionally 'System.Distributed.Core.trace' calls
+--   2. Logs additionally traces using @'System.Distributed.Core.logStr' 2@.
+--   3. Logs additionally every handler that gets run (system-defined trace)
+--   4. Logs additionally every trigger that gets run (system-defined trace)
+--   5. Traces also system-level information like events that aren't handled (system-defined trace)
+--   6. Traces even more system-level information, like the bytes being sent through the network on an message (system-defined trace)
 data SysConf' w = SysConf
   { verbosity :: w ::: Verbosity
       <#> "V" <!> "1" <?> "The system verbosity. Verbosity=3 traces every handler that gets run. Verbosity=4 traces also all triggers. Verbosity=5 traces also system-level information. Verbosity=6 traces even more system-level information, like the bytes being sent through the network on an message."
@@ -81,19 +122,60 @@ data SysConf' w = SysConf
   }
   deriving (Generic)
 
--- | A protocol which 
+-- | Wrap a protocol which receives as an argument a record which is parseable from
+-- the command line to pass to 'runOnory'.
+--
+-- To enable the configuration record to be parsed from the command line, it
+-- must have an additional type argument (to insert cli-related information)
+-- and @derive Generic@
+--
+-- === __Example__
+--
+-- @
+-- data HyParViewConf arg =
+--   HPVC
+--     { maxSizeActiveView :: arg ::: Int
+--         <?> "The max size of the active view"
+--     , maxSizePassiveView :: arg ::: Int
+--         <?> "The max size of the passive view"
+--     , actRWL :: arg ::: Int
+--         <?> "Active Random Walk Length"
+--     , passRWL :: arg ::: Int
+--         <?> "Passive Random Walk Length"
+--     , shuffleTimer :: arg ::: Int
+--         <!> "10000"
+--         <?> "Time in millis to trigger the event for passive view management (SHUFFLE)"
+--     , shuffleKa :: arg ::: Int
+--         <?> "The number of nodes from the active view sent in a Shuffle message."
+--     , shuffleKp :: arg ::: Int
+--         <?> "The number of nodes from the passive view sent in a Shuffle message."
+--     , shuffleTtl :: arg ::: Int
+--         <?> "The ttl for shuffle messages."
+--     , contactNode :: arg ::: Host
+--         <#> "c"
+--         <?> "The contact node"
+--     }
+--     deriving Generic
+--
+-- hyParView HPVC{..} = protocol @"HyParView" do
+--   ...
+--
+-- main = runOnory [P hyParView]
+-- @
 data P = forall c name. ( GenericParseRecord (Rep (c Wrapped))
                         , Unwrappable c
                         , KnownSymbol name )
                         => P (c Unwrapped -> Protocol name)
--- pattern P 
--- pattern P x <- P' x
---   where P = P' . unwrap
+
 data SomeP = forall name. SomeP (Protocol name)
 
 --------------------------------------------------------------------------------
 -- * Interpreter
 
+-- | Run a t'Core' action directly given a system configuration.
+--
+-- The returned value, t'Sync', must be 'wait'ed for. Otherwise, the main
+-- process will terminate regardless of the running threads.
 runCore :: SysConf -> Core a -> IO Sync
 runCore SysConf{..} c = do
   msgDecoders <- newMVar M.empty
@@ -111,6 +193,7 @@ runCore SysConf{..} c = do
   _ <- c `unCore` coreData
   return (Sync sync)
 
+-- | Interpret a 'System' into the t'Core' system runtime monad.
 interpSystem :: System a -> Core ()
 interpSystem sys = void $ iterM runF sys where
 
@@ -163,6 +246,10 @@ worker = Core \cd -> do
           writeChan (case exectx of TopLevel -> topLevelExec; Scoped _ protoc -> protoc)
             (unsafeCoerce h t)
 
+-- | Call 'wait' on the result of 'runCore' to halt the main thread until the
+-- runtime decides the main thread can terminate.
+-- Essentially, this means waiting forever since these distributed systems run
+-- indefinitely.
 wait :: Sync -> IO ()
 wait (Sync m) = readMVar m
 
@@ -230,7 +317,7 @@ cancelTimerThread :: ThreadId -> Handler
 cancelTimerThread tid = H $ \_ -> killThread tid
 
 -- | Basically 'interpSystem', but sets the (new) protocol executor in the local env
-interpProtocol :: Name -> System a -> Core ()
+interpProtocol :: String -> System a -> Core ()
 interpProtocol name proto = do
   protoExec <- liftIO newExecutor
   local (\cd -> case cd.inProto of
@@ -407,7 +494,7 @@ type Handlers = IORef (Map EventKey [(ExecutorContext, Handler)])
 -- that maps to this handler in the handlers map.
 data Handler = forall t. H (t -> IO ())
 
-data ExecutorContext = TopLevel | Scoped Name ProtocolKey
+data ExecutorContext = TopLevel | Scoped String ProtocolKey
 
 -- | A protocol key is the channel from which the /executor/ of the protocol
 -- will read saturated handler actions.

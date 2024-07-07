@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase, DuplicateRecordFields, ViewPatterns #-}
+-- | The functor generating the free monad for the system, core datatypes like
+-- t'Event', TH-derived free-monad actions for every functor constructor, and
+-- other core bits used to define the language.
 module System.Distributed.Free where
 
 import GHC.Fingerprint
@@ -35,7 +38,7 @@ type System = Free SystemF
 -- protocols and running them as a whole system (using an interpreter).
 --
 -- The boundary of the protocol must also be made explicit by using
--- 'protocolBoundary' (or 'protocol' from 'System.Distributed.Core'). Declaring
+-- @protocolBoundary@ (or 'System.Distributed.Core.protocol' from 'System.Distributed.Core'). Declaring
 -- the boundary of the protocol allows it to be treated as a unit which can run
 -- in parallel to other protocols.
 type Protocol name = System (Proxy name)
@@ -46,7 +49,7 @@ type Protocol name = System (Proxy name)
 data SystemF next where
 
   ProtocolBoundary
-    :: Name -> System a -> next -> SystemF next
+    :: String -> System a -> next -> SystemF next
 
   UponEvent
     :: Event et -> (et -> System a) -> next -> SystemF next
@@ -84,6 +87,10 @@ data SystemF next where
 --------------------------------------------------------------------------------
 -- Core datatypes
 
+-- | An t'Event' is a notification of something (requests, indications,
+-- messages, timers, and channel events) for which handlers can be registered.
+--
+-- The handlers for a given event will be executed when said event is triggered.
 data Event (evt_t :: Type) where
   Request
     :: { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
@@ -103,24 +110,38 @@ data Event (evt_t :: Type) where
 -- NB: Messages only store tyStr = @show (typeRep @evt_t)@ for tracing purposes.
 -- The fingerprint is the sole field used for the event key ordering.
 
+-- | A mutable variable in a 'System' specification.
 newtype Mutable a = Mutable (IORef a)
 
+-- | The types of timers that can be 'System.Distributed.Core.setup':
+-- 'System.Distributed.Core.periodic' or 'System.Distributed.Core.oneshot'.
 data TimerType timer where
   PeriodicTimer :: HasField "repeat" timer Int => TimerType timer
   OneShotTimer  :: TimerType timer
 
+-- | A t'Host' is an address into a remote system process. It is formed from
+-- the hostname and port.
+--
+-- It can be parsed from the command line as a @hostname:port@ (e.g.
+-- @127.0.0.1:25566@), or constructed using 'System.Distributed.Core.host'
+-- (e.g. @'System.Distributed.Core.host' "127.0.0.1" 25565@).
 newtype Host = Host { addr :: EndPointAddress }
 
-type Name = String
+-- | A verbosity to run the system at.
 type Verbosity = Int
 
 --------------------------------------------------------------------------------
 -- Network channel events
 
+-- | A known channel event triggered when an outgoing connection is successfully established
 newtype OutConnUp     = OutConnUp { to :: Host }
+-- | A known channel event triggered when an established outgoing connection is dropped
 newtype OutConnDown   = OutConnDown { to :: Host }
+-- | A known channel event triggered when an outgoing connection is fails to be established
 data    OutConnFailed = OutConnFailed { to :: Host, err :: TransportError ConnectErrorCode }
+-- | A known channel event triggered when an incoming connection is established
 newtype InConnUp      = InConnUp { from :: Host }
+-- | A known channel event triggered when an established incoming connection is dropped
 newtype InConnDown    = InConnDown { from :: Host }
 
 --------------------------------------------------------------------------------
