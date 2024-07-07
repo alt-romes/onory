@@ -13,8 +13,8 @@ module System.Distributed.Prelude
   , type (<?>), type (<!>), type (<#>), type (:::), Unwrapped
 
   -- * Prelude re-export
-  -- | For now, we also re-export the rest of the prelude (with the exception
-  -- of the functions we have re-defined).
+  -- | We also re-export the rest of the prelude (with the exception of the
+  -- functions we have re-defined).
   , module Prelude
   )
   where

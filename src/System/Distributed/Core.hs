@@ -385,7 +385,7 @@ logStr = traceStr
 -- proto2 :: Conf2 -> 'Protocol' "p2"
 -- proto2 conf = 'protocol' \@"p2" do ...
 --
--- main = 'System.Distributed.Interpret.runOnory' ['System.Distributed.Interpret.P' proto1, 'System.Distributed.Interpret.P' proto2]
+-- main = 'System.Distributed.Interpret.runProtos' ['System.Distributed.Interpret.P' proto1, 'System.Distributed.Interpret.P' proto2]
 -- @
 --
 -- A protocol still forms a 'System', so it can also be manually put together

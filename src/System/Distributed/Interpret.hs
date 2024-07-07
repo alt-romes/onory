@@ -8,16 +8,16 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant <$>" #-}
 -- | A 'System' is a specification. This module provides functions to turn a
--- 'System' specification into an executable program, namely, 'runOnory' and 'runSystem'.
+-- 'System' specification into an executable program, namely, 'runProtos' and 'runSystem'.
 --
 -- System specifications are also typically parametrised over a set of configuration parameters.
--- 'runOnory' further provides the ability to turn a protocol's configuration
+-- 'runProtos' further provides the ability to turn a protocol's configuration
 -- options into a command-line interface from which options can be directly
 -- parsed into the execution of the program.
 module System.Distributed.Interpret
   (
-  -- | 'runOnory' and 'runSystem' are the two main entrypoints for interpreting a 'System'.
-    runOnory, runSystem
+  -- | 'runProtos' and 'runSystem' are the two main entrypoints for interpreting a 'System'
+    runProtos, runSystem, readConf
 
   , SysConf, SysConf'(..), P(..)
 
@@ -67,8 +67,8 @@ import Data.Traversable (for)
 -- @--help@ to see the available options).
 --
 -- See also how to construct a t'P' from a 'Protocol' in t'P'.
-runOnory :: [P] -> IO ()
-runOnory protos = do
+runProtos :: [P] -> IO ()
+runProtos protos = do
   let
     -- Parse SysConf and the configuration record for every protocol
     parser = (,) <$>
@@ -84,11 +84,16 @@ runOnory protos = do
 
 -- | Interpret and execute a system given a system configuration.
 -- If you rather want an automatically cli-configurable stack of protocols you
--- may prefer 'runOnory'.
+-- may prefer 'runProtos'.
 runSystem :: SysConf -> System a -> IO ()
 runSystem c s = do
   sync <- runCore c $ interpSystem s
   wait sync -- `onCtrlC` closeTransport transport
+
+-- | Reads a configuration record from the command line interface. Useful when
+-- using 'runSystem' rather than 'runProtos'.
+readConf :: ∀ c. ( GenericParseRecord (Rep (c Wrapped)), Unwrappable c ) => IO (c Unwrapped)
+readConf = execParser (info (unwrap <$> parseRecordWithModifiers @(c Wrapped) lispCaseModifiers) fullDesc)
 
 -- | A system configuration record with the CLI-relevant additional information dropped.
 -- This means that @verbosity :: Int@, @hostname :: String@, and @port :: Int@.
@@ -99,7 +104,7 @@ type SysConf = SysConf' Unwrapped
 -- command line interface shorter opts, and default values.
 --
 -- Verbosity can be specified using @-V@ if using the command line interface
--- when using 'System.Distributed.Interpret.runOnory', or in the @verbosity@
+-- when using 'System.Distributed.Interpret.runProtos', or in the @verbosity@
 -- field of t'System.Distributed.Interpret.SysConf' when using
 -- 'System.Distributed.Interpret.runSystem'.
 --
@@ -123,7 +128,7 @@ data SysConf' w = SysConf
   deriving (Generic)
 
 -- | Wrap a protocol which receives as an argument a record which is parseable from
--- the command line to pass to 'runOnory'.
+-- the command line to pass to 'runProtos'.
 --
 -- To enable the configuration record to be parsed from the command line, it
 -- must have an additional type argument (to insert cli-related information)
@@ -160,7 +165,7 @@ data SysConf' w = SysConf
 -- hyParView HPVC{..} = protocol @"HyParView" do
 --   ...
 --
--- main = runOnory [P hyParView]
+-- main = runProtos [P hyParView]
 -- @
 data P = forall c name. ( GenericParseRecord (Rep (c Wrapped))
                         , Unwrappable c
