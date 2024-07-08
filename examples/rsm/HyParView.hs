@@ -42,7 +42,7 @@ data HyParViewConf arg =
 
 -- Paper: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 -- Pseudo code: https://github.com/alt-romes/projeto-asd/blob/master/pseudo-code/HyParView.c#L89
-hyParView :: HyParViewConf Unwrapped -> Protocol "HyParView"
+hyParView :: HyParViewConf FromCli -> Protocol "HyParView"
 hyParView HPVC{..} = protocol @"HyParView" do
   puts "Starting HyParView..."
   myself <- self

@@ -327,8 +327,9 @@ interpProtocol name proto = do
   protoExec <- liftIO newExecutor
   local (\cd -> case cd.inProto of
     TopLevel -> cd{inProto=Scoped name protoExec}
-    Scoped{} -> error "Nested protocol declarations are not supported!") $
-      interpSystem proto
+    -- TODO: Test nested protocols and see if they do the right thing.
+    Scoped parent_name _ -> cd{inProto=Scoped (parent_name ++ "-" ++ name) protoExec}
+    ) $ interpSystem proto
 
 newExecutor :: IO (Chan (IO ()))
 newExecutor = do

@@ -19,6 +19,7 @@ import Control.Monad.Free
 -- import Control.Monad.Free.Church (TODO!!)
 import Control.Monad.Free.TH
 import Options.Generic
+import Data.Bifunctor
 
 -- | A distributed system specification
 type System = Free SystemF
@@ -189,6 +190,9 @@ instance Show Host where
 instance IsString Host where
   fromString = Host . EndPointAddress . fromString . (++ ":0")
     -- invariant: the nodes always use a single endpoint no 0
+
+instance Read Host where
+  readsPrec i = map (first (fromString @Host)) <$> readsPrec @String i
 
 instance ParseRecord Host where
   parseRecord = fmap getOnly parseRecord

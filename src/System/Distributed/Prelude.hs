@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, BlockArguments, FunctionalDependencies #-}
 {-# LANGUAGE UndecidableInstances #-} -- Eq a => SEq a et friends
+{-# OPTIONS_GHC -Wno-orphans #-} -- Eq a => SEq a et friends
 -- todo: explicit export list of whole language features
 module System.Distributed.Prelude
   ( module System.Distributed.Core
@@ -10,38 +11,53 @@ module System.Distributed.Prelude
   , Generic {-ParseRecord: we need only Generic for confs-}
   , Binary
   -- re-export optparse-generic niceties
-  , type (<?>), type (<!>), type (<#>), type (:::), Unwrapped
+  , type (<?>), type (<!>), type (<#>), type (:::)
 
   -- * Prelude re-export
   -- | We also re-export the rest of the prelude (with the exception of the
   -- functions we have re-defined).
   , module Prelude
+  , module GHC.Records
   )
   where
 
+import GHC.Records
 import GHC.Generics (Generic)
 import Data.Binary (Binary)
 import Data.Proxy
 import Data.Kind
+import Type.Reflection
+import qualified Data.Text as T
+import Text.Read (readMaybe)
 import Control.Monad hiding (when)
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
-import Options.Generic (type (<?>), type (<!>), type (<#>), type (:::), Unwrapped)
+import Options.Generic (type (<?>), type (<!>), type (<#>), type (:::), Unwrapped, ParseRecord(..), getOnly, ParseFields(..), ParseField(..))
 
 import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
                       , all, any, filter
                       , (+), (-), (*), (/), mod, div, abs
-                      , print
+                      , print, lookup
                       )
 import qualified Prelude as P
 
 import System.Distributed.Free
 import System.Distributed.Core
+import Data.Maybe
+
+type FromCli = Unwrapped
 
 --------------------------------------------------------------------------------
 -- * Control flow
+
+while :: LiftS a Bool => a -> System b -> System ()
+while sb sc = do
+  b <- liftS sb
+  if b then sc >> while sb sc
+       else pure ()
+{-# INLINE while #-}
 
 when :: LiftS a Bool => a -> System b -> System ()
 when sb sc = do
@@ -60,6 +76,16 @@ ifThenElse sb st sf = do
 -- | A placebo
 call :: ∀ a. a -> a
 call = id
+
+--------------------------------------------------------------------------------
+-- * Mutability
+
+-- | Let's sell it as "copying".
+-- Whenever we want to use the value of a mutable reference immutabily, for
+-- instance, to send in a message, or to store in a different variable, we need
+-- to copy the value.
+copy :: Mutable a -> System a
+copy = get
 
 --------------------------------------------------------------------------------
 -- * Sets and maps
@@ -82,10 +108,11 @@ class Container a where
   (-=) :: a -> Key a  -> System a
   empty :: System a
   size :: LiftS b a => b -> System Int
-  contains :: a -> Key a -> System Bool
+  contains :: (LiftS b (Key a), LiftS c a) => c -> b -> System Bool
 
-  notin    :: Key a -> a -> System Bool
-  notin k c = P.not <$> contains c k
+  notin    :: (LiftS b (Key a), LiftS c a) => b -> c -> System Bool
+  notin k c = do
+    P.not <$> contains c k
   {-# INLINE notin #-}
 
   union, (\\) :: (LiftS b a, LiftS c a) => b -> c -> System a
@@ -103,7 +130,10 @@ instance P.Ord a => Container (Set a) where
   (-=) = fmap pure . flip S.delete
   size = fmap S.size . liftS
   empty = pure S.empty
-  contains = fmap pure . flip S.member
+  contains sc sk = do
+    c <- liftS sc
+    k <- liftS sk
+    return $ S.member k c
   union x y = S.union <$> liftS x <*> liftS y
   (\\) x y = (S.\\) <$> liftS x <*> liftS y
   toList x = S.toList <$> liftS x
@@ -133,7 +163,10 @@ instance P.Ord k => Container (Map k a) where
   (-=) c x = pure $ M.delete x c
   size = fmap M.size . liftS
   empty = pure M.empty
-  contains = fmap pure . flip M.member
+  contains sc sk = do
+    c <- liftS sc
+    k <- liftS sk
+    return $ M.member k c
   union x y = M.union <$> liftS x <*> liftS y
   (\\) x y = (M.\\) <$> liftS x <*> liftS y
   toList x = M.toList <$> liftS x
@@ -172,7 +205,7 @@ instance Container a => Container (Mutable a) where
     return ref
   empty = new =<< empty @a
   size = size <=< get <=< liftS
-  contains ref k = get ref >>= (`contains` k)
+  contains ref k = liftS ref >>= get >>= (`contains` k)
 
   -- | Union for Mutable containers will write the first reference with the union.
   union x y = do
@@ -221,6 +254,21 @@ pattern Set <- _ where
 pattern Map :: Map k a
 pattern Map <- _ where
   Map = M.empty
+
+class Container a => MapContainer a where
+  type Lookup a
+  lookup :: (LiftS b (Key a), LiftS c a) => b -> c -> System (Maybe (Lookup a))
+
+instance Ord k => MapContainer (Map k a) where
+  type Lookup (Map k a) = a
+  lookup sk sm = do
+    k <- liftS sk
+    m <- liftS sm
+    pure $ M.lookup k m
+
+instance MapContainer a => MapContainer (Mutable a) where
+  type Lookup (Mutable a) = Lookup a
+  lookup sk sm = lookup sk (liftS sm >>= get)
 
 --------------------------------------------------------------------------------
 -- * Expressions
@@ -363,7 +411,8 @@ randomSubset (c, ln) = do
     go :: ImmutableCR a -> Int -> System (ImmutableCR a)
     go !acc 0 = pure acc
     go !acc i = do
-      r <- pure @System container `randomElemWith` \x -> elToKey (Proxy @(ImmutableCR a)) x `notin` acc
+      r <- pure @System container `randomElemWith` \x ->
+        notin (pure @System $ elToKey (Proxy @(ImmutableCR a)) x) (pure @System acc)
       acc' <- acc += r
       go acc' (i P.- 1)
   e <- empty @(ImmutableCR a)
@@ -383,7 +432,29 @@ instance {-# OVERLAPPABLE #-} (a ~ b) => LiftS a b where
   liftS = pure
   {-# INLINE liftS #-}
 
+instance {-# OVERLAPPING #-} (a ~ b) => LiftS (Mutable a) b where
+  liftS = get
+  {-# INLINE liftS #-}
+
 instance {-# OVERLAPPING #-} (a ~ b) => LiftS (System a) b where
   liftS = id
+  -- we could check typeable for a = Mutable and get the value here, if anyone
+  -- ever wanted to add together a System (Mutable Int) and an Int...
   {-# INLINE liftS #-}
+
+-- Doesn't work.
+-- instance {-# OVERLAPPING #-} (a ~ Mutable b, b ~ c) => LiftS (System a) c where
+--   liftS = (get =<<)
+--   {-# INLINE liftS #-}
+
+instance (Read a, Ord a, Typeable a) => ParseRecord (Set a) where
+  parseRecord = fmap getOnly parseRecord
+
+instance (Read a, Ord a, Typeable a) => ParseFields (Set a) -- default impl uses ParseField
+instance (Read a, Ord a, Typeable a) => ParseField (Set a) where
+  parseField hl fl sn dv =
+    (\s -> S.fromList $
+      fromMaybe (error $ "Failed to read from the command line option " ++ show fl ++ " a " ++ show (typeRep @a) ++ " in a comma separated set of values.")
+      . readMaybe @a . T.unpack <$> T.split (P.== ',') s)
+    <$> parseField @T.Text hl fl sn dv
 
