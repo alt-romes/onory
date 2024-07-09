@@ -64,6 +64,21 @@ library
 
 -- romes:todo: do I have to compile with -threaded?
 
+executable multi-paxos
+    import:           warnings
+    main-is:          Main.hs
+    other-modules:    Paxos
+    default-extensions:
+        LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments,
+        NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields,
+        DeriveGeneric, DeriveAnyClass, DataKinds
+    ghc-options:
+        -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing
+        -Wno-unrecognised-pragmas
+    build-depends:    base, onory
+    hs-source-dirs:   examples/multi-paxos
+    default-language: GHC2021
+
 -- Replicated State Machine
 executable rsm
     import:           warnings
