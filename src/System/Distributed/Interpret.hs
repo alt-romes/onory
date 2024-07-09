@@ -328,6 +328,7 @@ interpProtocol name proto = do
   local (\cd -> case cd.inProto of
     TopLevel -> cd{inProto=Scoped name protoExec}
     -- TODO: Test nested protocols and see if they do the right thing.
+    -- What about forM nested protocol with the same name? curious...
     Scoped parent_name _ -> cd{inProto=Scoped (parent_name ++ "-" ++ name) protoExec}
     ) $ interpSystem proto
 

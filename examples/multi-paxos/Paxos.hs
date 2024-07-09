@@ -27,6 +27,7 @@ paxos :: (FromCli ::: st) ~ st
       -> Protocol "paxos"
 paxos knownOps PaxosConf{..} = protocol @"paxos" do
   puts "Starting paxos..."
+  myself <- self
 
   protocol @"replica" do -- A sub-protocol
 
@@ -77,21 +78,21 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
             proposals += (slot_in_copy, random_request)
             foreach leaders \leader_host -> do
               trigger send ProposeMsg{to=leader_host, slot=slot_in_copy, cmd=random_request}
-          next_slot <- slot_in + (1::Int)
+          next_slot <- slot_in + 1
           slot_in := next_slot
 
-      perform((k::Int,cid::Int,op)) = do
-        older_decision <- decisions `randomElemWith'` (\(slot,(k'::Int,cid'::Int,op')) ->
+      perform((k,cid,op)) = do
+        older_decision <- decisions `randomElemWith'` (\(slot,(k',cid',op')) ->
             slot < slot_out && k == k' && cid == cid' && op == op')
         if (isReconfig(op) || older_decision.exists) then do
-          slot_in_val <- slot_in + (1::Int)
+          slot_in_val <- slot_in + 1
           slot_in := slot_in_val
         else do
           operation  <- lookup op.name knownOps
           state_copy <- copy(app_state)
           let (next, result) = operation.value(state_copy)
           app_state := next
-          next_slot <- slot_in + (1::Int)
+          next_slot <- slot_in + 1
           slot_out := next_slot
           trigger responseIndication result
 
@@ -114,21 +115,48 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
       -- Finally, propose again
       propose()
 
-  protocol @"leader" do
-
-    ok
-
   protocol @"acceptor" do
 
-    ballot_num <- new (-1::Int)
+    ballot_num <- new (-1)
     accepted   <- new (Set @PValue)
-    ok
 
-    -- upon receive \P1A{} -> do
-    --   ok
+    upon receive \P1AMsg{leader, ballot} -> do
+      when (ballot > ballot_num) do
+        ballot_num := ballot
+      accpt <- get(accepted)
+      bltn  <- get(ballot_num)
+      trigger send P1BMsg{to=leader, from=myself, ballot=bltn, accepted=accpt}
 
-    -- upon receive \P2A{} -> do
-    --   ok
+    upon receive \P2AMsg{leader, pv=(b, s, c)} -> do
+      when (b == ballot_num) do
+        accepted += (b,s,c)
+      bn <- get(ballot_num)
+      trigger send P2BMsg{to=leader, from=myself, ballot=bn}
+
+  protocol @"leader" do
+
+    undefined commander
+    
+commander :: Set Host -- ^ Acceptors
+          -> Set Host -- ^ Replicas
+          -> PValue
+          -> Protocol "commander"
+commander acceptors replicas (b,s,c) = protocol @"commander" do
+  myself <- self
+  wait_for <- new (Set @Host)
+
+  foreach acceptors \a -> do
+    trigger send P2AMsg{to=a, leader=myself, pv=(b,s,c)}
+
+  upon receive \P2BMsg{from=a, ballot=b'} -> do
+    if b' == b then do
+      wait_for -= a
+      when (size wait_for < (size acceptors `div` 2)) do
+        foreach replicas \p -> do
+          trigger send DecideMsg{to=p, slot=s, cmd=c}
+        ok
+    else
+      ok
 
 --------------------------------------------------------------------------------
 -- * Replica Interface
@@ -159,3 +187,9 @@ data DecideMsg  = DecideMsg  { to :: Host, slot :: Int, cmd :: Cmd } deriving (G
 -- | Let a pvalue be a triple consisting of a ballot number, a slot number,
 -- and a command
 type PValue = (Int, Int, Cmd)
+
+data P1AMsg = P1AMsg { to :: Host, leader :: Host, ballot :: Int } deriving (Generic, Binary)
+data P1BMsg = P1BMsg { to :: Host, from   :: Host, ballot :: Int, accepted :: Set PValue } deriving (Generic, Binary)
+
+data P2AMsg = P2AMsg { to :: Host, leader :: Host, pv :: PValue } deriving (Generic, Binary)
+data P2BMsg = P2BMsg { to :: Host, from   :: Host, ballot :: Int } deriving (Generic, Binary)
