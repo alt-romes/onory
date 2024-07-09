@@ -257,14 +257,16 @@ pattern Map <- _ where
 
 class Container a => MapContainer a where
   type Lookup a
-  lookup :: (LiftS b (Key a), LiftS c a) => b -> c -> System (Maybe (Lookup a))
+  lookup :: (LiftS b (Key a), LiftS c a) => b -> c -> System (NullableValue (Lookup a))
 
 instance Ord k => MapContainer (Map k a) where
   type Lookup (Map k a) = a
   lookup sk sm = do
     k <- liftS sk
     m <- liftS sm
-    pure $ M.lookup k m
+    case M.lookup k m of
+      Nothing -> pure NullValue
+      Just x  -> pure (ExistsValue x)
 
 instance MapContainer a => MapContainer (Mutable a) where
   type Lookup (Mutable a) = Lookup a
@@ -386,18 +388,34 @@ any f t = P.or <$> (traverse (liftS . f) =<< liftS t)
 
 randomElem :: (Container a, LiftS b a) => b -> System (Elem a)
 randomElem x = do
+  flip orDefault (error "randomElemWith: container is empty!") <$>
+    randomElem' x
+
+randomElemWith :: (Container a, LiftS b a) => b -> (Elem a -> System Bool) -> System (Elem a)
+randomElemWith container cond =
+  flip orDefault (error "randomElemWith: container is empty!") <$>
+    randomElemWith' container cond
+
+randomElem' :: (Container a, LiftS b a) => b -> System (NullableValue (Elem a))
+randomElem' x = do
   c <- liftS x
   l <- toList (pure @System c)
   s <- size (pure @System c)
-  i <- random (0, s P.- 1)
-  return (l !! i)
+  if s P.> 0 then do
+    i <- random (0, s P.- 1)
+    return $ ExistsValue (l !! i)
+  else do
+    return NullValue
 
-randomElemWith :: (Container a, LiftS b a) => b -> (Elem a -> System Bool) -> System (Elem a)
-randomElemWith container cond = do
-  n <- randomElem container
-  ifThenElse (cond n)
-    (return n)
-    (randomElemWith container cond)
+randomElemWith' :: ∀ a b. (Container a, LiftS b a) => b -> (Elem a -> System Bool) -> System (NullableValue (Elem a))
+randomElemWith' container cond = do
+  mn <- randomElem' container
+  case mn of
+    NullValue -> return NullValue
+    ExistsValue n ->
+      ifThenElse (cond n)
+        (return (ExistsValue n))
+        (randomElemWith' container cond)
 
 -- | Extract a random subset out of this container.
 -- If this is a mutable container, the reference will be written with the random subset.
@@ -417,6 +435,23 @@ randomSubset (c, ln) = do
       go acc' (i P.- 1)
   e <- empty @(ImmutableCR a)
   go e (min s n)
+
+data NullableValue a = NullValue | ExistsValue { value :: a }
+
+instance HasField "exists" (NullableValue a) Bool where
+  getField ExistsValue{} = True
+  getField NullValue{} = True
+
+-- | Get a nullable value's value, or a default value.
+--
+-- @
+-- elem <- randomElem'(c)
+-- if (elem `orDefault` 1 > 0) do
+--    ...
+-- @
+orDefault :: NullableValue a -> a -> a
+orDefault NullValue d = d
+orDefault ExistsValue{value} _d = value
 
 --------------------------------------------------------------------------------
 -- * Utilities
