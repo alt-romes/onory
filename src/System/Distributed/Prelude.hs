@@ -47,6 +47,8 @@ import System.Distributed.Free
 import System.Distributed.Core
 import Data.Maybe
 
+default (Int)
+
 type FromCli = Unwrapped
 
 --------------------------------------------------------------------------------
@@ -186,7 +188,7 @@ instance P.Ord k => Container (Map k a) where
   {-# INLINE toList #-}
   {-# INLINE filter #-}
 
-instance Container a => Container (Mutable a) where
+instance (UnliftedS a ~ a, Container a) => Container (Mutable a) where
   type Elem (Mutable a) = Elem a
   type Key  (Mutable a) = Key a
   type ImmutableCR (Mutable a) = a
@@ -204,7 +206,7 @@ instance Container a => Container (Mutable a) where
     ref := c'
     return ref
   empty = new =<< empty @a
-  size = size <=< get <=< liftS
+  size = size @a <=< get <=< liftS
   contains ref k = liftS ref >>= get >>= (`contains` k)
 
   -- | Union for Mutable containers will write the first reference with the union.
@@ -250,10 +252,16 @@ pattern Set :: Set a
 pattern Set <- _ where
   Set = S.empty
 
+setFromList :: Ord a => [a] -> Set a
+setFromList = S.fromList
+
 -- | A new, empty, map
 pattern Map :: Map k a
 pattern Map <- _ where
   Map = M.empty
+
+mapFromList :: Ord k => [(k, a)] -> Map k a
+mapFromList = M.fromList
 
 class Container a => MapContainer a where
   type Lookup a
@@ -268,9 +276,14 @@ instance Ord k => MapContainer (Map k a) where
       Nothing -> pure NullValue
       Just x  -> pure (ExistsValue x)
 
-instance MapContainer a => MapContainer (Mutable a) where
+instance (UnliftedS a ~ a, MapContainer a) => MapContainer (Mutable a) where
   type Lookup (Mutable a) = Lookup a
   lookup sk sm = lookup sk (liftS sm >>= get)
+
+(!) :: (MapContainer a, LiftS b (Key a), LiftS c a) => c -> b -> System (Lookup a)
+(!) x y = do
+  r <- lookup y x
+  return (value r)
 
 --------------------------------------------------------------------------------
 -- * Expressions
@@ -286,7 +299,7 @@ instance {-# OVERLAPPABLE #-} Eq a => SEq a where
   (==) x y = (P.==) <$> liftS x <*> liftS y
   {-# INLINE (==) #-}
 
-instance {-# OVERLAPPING #-} SEq a => SEq (Mutable a) where
+instance {-# OVERLAPPING #-} (UnliftedS a ~ a, SEq a) => SEq (Mutable a) where
   (==) x y = do
     x' <- get =<< liftS x
     y' <- get =<< liftS y
@@ -315,11 +328,15 @@ instance {-# OVERLAPPABLE #-} P.Ord a => SOrd a where
   compare x y = P.compare <$> liftS x <*> liftS y
   {-# INLINE compare #-}
 
-instance {-# OVERLAPPING #-} SOrd a => SOrd (Mutable a) where
+instance {-# OVERLAPPING #-} (UnliftedS a ~ a, SOrd a) => SOrd (Mutable a) where
   compare x y = do
     x' <- get =<< liftS x
     y' <- get =<< liftS y
-    compare x' y'
+    compare @a x' y'
+  {-# INLINE compare #-}
+
+instance {-# OVERLAPPING #-} SOrd Int where
+  compare x y = P.compare <$> liftS x <*> liftS y
   {-# INLINE compare #-}
 
 (&&), (||) :: (LiftS a Bool, LiftS b Bool) => a -> b -> System Bool
@@ -419,7 +436,7 @@ randomElemWith' container cond = do
 
 -- | Extract a random subset out of this container.
 -- If this is a mutable container, the reference will be written with the random subset.
-randomSubset :: ∀ a b c. (Container a, LiftS b a, LiftS c Int, Container (ImmutableCR a), Elem a ~ Elem (ImmutableCR a))
+randomSubset :: ∀ a b c. (Container a, LiftS b a, LiftS c Int, Container (ImmutableCR a), Container (UnliftedS (ImmutableCR a)), Elem a ~ Elem (ImmutableCR a), (Key (UnliftedS (ImmutableCR a)) ~ UnliftedS (Key (ImmutableCR a))), (LiftS (Key (ImmutableCR a)) (UnliftedS (Key (ImmutableCR a))), LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a))))
              => (b, c) -> System (ImmutableCR a)
 randomSubset (c, ln) = do
   container <- liftS c
@@ -430,7 +447,7 @@ randomSubset (c, ln) = do
     go !acc 0 = pure acc
     go !acc i = do
       r <- pure @System container `randomElemWith` \x ->
-        notin (pure @System $ elToKey (Proxy @(ImmutableCR a)) x) (pure @System acc)
+        notin (elToKey (Proxy @(ImmutableCR a)) x) acc
       acc' <- acc += r
       go acc' (i P.- 1)
   e <- empty @(ImmutableCR a)
@@ -456,31 +473,30 @@ orDefault ExistsValue{value} _d = value
 --------------------------------------------------------------------------------
 -- * Utilities
 
+type family UnliftedS a where
+  UnliftedS (System a) = a
+  UnliftedS (Mutable a) = a  -- In certain instances, we'll require UnliftedS a ~ a because nested references are not supported.
+  UnliftedS a = a
+
 -- | Turn any value into a System one by automatically @return@ing it if
 -- needed. The lifted value is @b@.
-class LiftS a b | a -> b where
-  -- | Not /that/ SystemV.
-  -- The value that is lifted in(to) the system.
-  liftS :: a -> System b
+class (b ~ UnliftedS a) => LiftS a b where
+  -- | The value that is lifted in(to) the system.
+  liftS :: a -> System (UnliftedS a)
 
-instance {-# OVERLAPPABLE #-} (a ~ b) => LiftS a b where
-  liftS = pure
-  {-# INLINE liftS #-}
-
-instance {-# OVERLAPPING #-} (a ~ b) => LiftS (Mutable a) b where
+instance LiftS (Mutable a) a where
   liftS = get
   {-# INLINE liftS #-}
 
-instance {-# OVERLAPPING #-} (a ~ b) => LiftS (System a) b where
+instance LiftS (System a) a where
   liftS = id
   -- we could check typeable for a = Mutable and get the value here, if anyone
   -- ever wanted to add together a System (Mutable Int) and an Int...
   {-# INLINE liftS #-}
 
--- Doesn't work.
--- instance {-# OVERLAPPING #-} (a ~ Mutable b, b ~ c) => LiftS (System a) c where
---   liftS = (get =<<)
---   {-# INLINE liftS #-}
+instance (a ~ UnliftedS a) => LiftS a a where
+  liftS = pure
+  {-# INLINE liftS #-}
 
 instance (Read a, Ord a, Typeable a) => ParseRecord (Set a) where
   parseRecord = fmap getOnly parseRecord

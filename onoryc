@@ -36,8 +36,8 @@ if ! test -f "$ONORY_TMP/onory.env"; then
 fi
 
 GHC_OPTIONS="-XLambdaCase -XRecordWildCards -XOverloadedRecordDot -XBlockArguments -XNoImplicitPrelude \
-             -XRebindableSyntax -XDuplicateRecordFields -XDeriveGeneric -XDeriveAnyClass -XDataKinds \
-             -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas"
+             -XRebindableSyntax -XDuplicateRecordFields -XDeriveGeneric -XDeriveAnyClass -XDataKinds -XExtendedDefaultRules \
+             -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing -Wno-unrecognised-pragmas -Wno-type-defaults"
 
 # Compile the system
 ghc $GHC_OPTIONS -package-env "$ONORY_TMP/onory.env" "$@"

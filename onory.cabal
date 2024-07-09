@@ -71,10 +71,10 @@ executable multi-paxos
     default-extensions:
         LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments,
         NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields,
-        DeriveGeneric, DeriveAnyClass, DataKinds
+        DeriveGeneric, DeriveAnyClass, DataKinds, ExtendedDefaultRules
     ghc-options:
         -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing
-        -Wno-unrecognised-pragmas
+        -Wno-unrecognised-pragmas -Wno-type-defaults
     build-depends:    base, onory
     hs-source-dirs:   examples/multi-paxos
     default-language: GHC2021
@@ -87,10 +87,10 @@ executable rsm
     default-extensions:
         LambdaCase, RecordWildCards, OverloadedRecordDot, BlockArguments,
         NoImplicitPrelude, RebindableSyntax, DuplicateRecordFields,
-        DeriveGeneric, DeriveAnyClass, DataKinds
+        DeriveGeneric, DeriveAnyClass, DataKinds, ExtendedDefaultRules
     ghc-options:
         -Wno-missing-signatures -Wno-unused-do-bind -Wno-name-shadowing
-        -Wno-unrecognised-pragmas
+        -Wno-unrecognised-pragmas -Wno-type-defaults
     build-depends:
         base, containers,
         onory
