@@ -114,8 +114,8 @@ class (Elem (ImmutableCR a) ~ Elem a) => Container a where
   --   'print' elem
   -- @
   foreach :: a -> (Elem a -> System b) -> System ()
-  (+=) :: a -> Elem a -> System a
-  (-=) :: a -> Key a  -> System a
+  (+=) :: LiftS b (Elem a) => a -> b -> System a
+  (-=) :: LiftS b (Key a)  => a -> b -> System a
   empty :: System a
   size :: LiftS b a => b -> System Int
   contains :: (LiftS b (Key a), LiftS c a) => c -> b -> System Bool
@@ -129,6 +129,8 @@ class (Elem (ImmutableCR a) ~ Elem a) => Container a where
 
   toList :: (LiftS b a) => b -> System [Elem a]
   filter :: (LiftS b Bool, LiftS c a) => (Elem a -> b) -> c -> System a
+
+  -- internal
   elToKey :: Proxy a -> Elem a -> Key a
   immutableCR :: a -> System (ImmutableCR a)
 
@@ -137,8 +139,8 @@ instance P.Ord a => Container (Set a) where
   type Key  (Set a) = a
   type ImmutableCR (Set a) = Set a
   foreach = forM_ . S.toList
-  (+=) = fmap pure . flip S.insert
-  (-=) = fmap pure . flip S.delete
+  (+=) c = liftS >=> pure . flip S.insert c
+  (-=) c = liftS >=> pure . flip S.delete c
   size = fmap S.size . liftS
   empty = pure S.empty
   contains sc sk = do
@@ -160,8 +162,8 @@ instance P.Ord k => Container (Map k a) where
   type Key  (Map k a) = k
   type ImmutableCR (Map k a) = Map k a
   foreach = forM_ . M.toList
-  (+=) c x = pure $ uncurry M.insert x c
-  (-=) c x = pure $ M.delete x c
+  (+=) c x = liftS x >>= \x' -> pure $ uncurry M.insert x' c
+  (-=) c x = liftS x >>= \x' -> pure $ M.delete x' c
   size = fmap M.size . liftS
   empty = pure M.empty
   contains sc sk = do
@@ -389,7 +391,7 @@ randomElem x = do
   flip orDefault (error "randomElemWith: container is empty!") <$>
     randomElem' x
 
-randomElemWith :: (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)))
+randomElemWith :: (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)), LiftS (Key (ImmutableCR a)) (Key (ImmutableCR a)))
                => b -> (Elem a -> System Bool) -> System (Elem a)
 randomElemWith container cond =
   flip orDefault (error "randomElemWith: container is empty!") <$>
@@ -406,7 +408,7 @@ randomElem' x = do
   else do
     return NullValue
 
-randomElemWith' :: ∀ a b. (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)))
+randomElemWith' :: ∀ a b. (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)), LiftS (Key (ImmutableCR a)) (Key (ImmutableCR a))) -- these instances are needed because they are type families probably
                 => b -> (Elem a -> System Bool) -> System (NullableValue (Elem a))
 randomElemWith' container cond = do
   c <- liftS container
@@ -428,7 +430,7 @@ randomElemWith' container cond = do
 -- the container random subset.
 -- If this is a mutable container, the reference will be unchanged.
 randomSubset :: ∀ a b c. (Container a, LiftS b a, LiftS c Int, Container (ImmutableCR a),
-                UnliftedS (ImmutableCR a) ~ ImmutableCR a, Elem a ~ Elem (ImmutableCR a), (Key (UnliftedS (ImmutableCR a)) ~ UnliftedS (Key (ImmutableCR a))), (LiftS (Key (ImmutableCR a)) (UnliftedS (Key (ImmutableCR a))), LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a))))
+                UnliftedS (ImmutableCR a) ~ ImmutableCR a, Elem a ~ Elem (ImmutableCR a), (Key (UnliftedS (ImmutableCR a)) ~ UnliftedS (Key (ImmutableCR a))), (LiftS (Key (ImmutableCR a)) (UnliftedS (Key (ImmutableCR a))), LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a))), LiftS (Elem a) (Elem a))
              => (b, c) -> System (ImmutableCR a)
 randomSubset (c, ln) = do
   container <- liftS c
