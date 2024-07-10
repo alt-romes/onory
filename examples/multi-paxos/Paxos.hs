@@ -1,4 +1,5 @@
 {-# HLINT ignore "Redundant bracket" #-}
+{-# HLINT ignore "Redundant return" #-}
 
 -- | Paxos as in Paxos Made Moderately Complex
 -- https://courses.cs.washington.edu/courses/cse452/22wi/papers/van-renesse-altinbuken-paxos-made-moderately-complex.pdf
@@ -14,6 +15,8 @@ default (Int) -- Needed, specify what the default type for number literals shoul
 data PaxosConf s cli = PaxosConf
   { initialState   :: cli ::: s
   , initialLeaders :: cli ::: Set Host
+  , knownAcceptors :: cli ::: Set Host
+  , knownReplicas  :: cli ::: Set Host
   , slotWindow     :: cli ::: Int
   }
   deriving Generic
@@ -117,7 +120,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
 
   protocol @"acceptor" do
 
-    ballot_num <- new (-1)
+    ballot_num <- new (-1, undefined)
     accepted   <- new (Set @PValue)
 
     upon receive \P1AMsg{leader, ballot} -> do
@@ -135,15 +138,41 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
 
   protocol @"leader" do
 
-    undefined commander
-    
-commander :: Set Host -- ^ Acceptors
-          -> Set Host -- ^ Replicas
-          -> PValue
-          -> Protocol "commander"
-commander acceptors replicas (b,s,c) = protocol @"commander" do
+    myself     <- self
+    ballot_num <- new (0, myself)
+    active     <- new false
+    proposals  <- new (Map @Int @Cmd)
+
+    bn <- get(ballot_num)
+    scout myself knownAcceptors bn
+
+    upon receive \ProposeMsg{slot=s, cmd=c} -> do
+      when (s `notin` proposals) do
+        proposals += (s,c)
+        when active do
+          bn <- get(ballot_num)
+          commander myself knownAcceptors knownReplicas (bn, s, c)
+
+    upon receive \AdoptedMsg{ballot=bn, pvalues=pvals} -> do
+      props <- get(proposals)
+      pmx   <- pmax(pvals)
+      new_props <- props <| pmx
+      proposals := new_props
+      foreach proposals \(s,c) -> do
+        commander myself knownAcceptors knownReplicas (bn, s, c)
+      active := true
+
+    upon receive \PreemptedMsg{ballot=(r',l')} -> do
+      when ((r', l') > ballot_num) do
+        active := false
+        r'' <- r' + 1
+        ballot_num := (r'', myself)
+        bn <- get(ballot_num)
+        scout myself knownAcceptors bn
+
+commander leader acceptors replicas (b,s,c) = protocol @"commander" do
   myself <- self
-  wait_for <- new (Set @Host)
+  wait_for <- new acceptors
 
   foreach acceptors \a -> do
     trigger send P2AMsg{to=a, leader=myself, pv=(b,s,c)}
@@ -154,12 +183,56 @@ commander acceptors replicas (b,s,c) = protocol @"commander" do
       when (size wait_for < (size acceptors `div` 2)) do
         foreach replicas \p -> do
           trigger send DecideMsg{to=p, slot=s, cmd=c}
-        ok
-    else
+        exit
+    else do
+      trigger send PreemptedMsg{to=leader, ballot=b'}
+      exit
+
+scout leader acceptors b = protocol @"scout" do
+  myself   <- self
+  wait_for <- new acceptors
+  pvalues  <- new (Set @PValue)
+  foreach acceptors \a -> do
+    trigger send P1AMsg{to=a, leader=myself, ballot=b}
+
+  upon receive \P1BMsg{from=a, ballot=b', accepted=r} -> do
+    if b' == b then do
+      new_pvs <- pvalues `union` r
+      pvalues := new_pvs
+      wait_for -= a
+      when (size wait_for < (size acceptors `div` 2)) do
+        pvs <- get(pvalues)
+        trigger send AdoptedMsg{to=leader, ballot=b, pvalues=pvs}
+        exit
+    else do
+      trigger send PreemptedMsg{to=leader, ballot=b'}
+      exit
+
+(<|) props pm = pm `union` props -- left biased union implements <|
+
+pmax pvs = do
+  -- highest-ballot-per-slot
+  slot_ballots <- new (Map @Int @(BN, Cmd))
+
+  foreach pvs \(b, s, c) -> do
+    r <- lookup s slot_ballots 
+    if r.exists then do
+      let (b', _c') = r.value
+      when (b > b') do
+        slot_ballots += (s, (b,c)) -- overwrites
+    else do
+      slot_ballots += (s, (b,c))
       ok
 
+  result <- new (Map @Int @Cmd)
+  foreach slot_ballots \(s, (_,c)) -> do
+    result += (s,c)
+
+  res <- get(result)
+  return res
+
 --------------------------------------------------------------------------------
--- * Replica Interface
+-- * Interface
 
 -- A command is a triple ⟨κ,cid,operation⟩, where κ1 is the identifier of the
 -- client that issued the command and cid is a client-local unique command
@@ -181,15 +254,19 @@ responseIndication = request @String "ClientResponse"
 data ProposeMsg = ProposeMsg { to :: Host, slot :: Int, cmd :: Cmd } deriving (Generic, Binary)
 data DecideMsg  = DecideMsg  { to :: Host, slot :: Int, cmd :: Cmd } deriving (Generic, Binary)
 
---------------------------------------------------------------------------------
--- * Acceptor Interface
-
 -- | Let a pvalue be a triple consisting of a ballot number, a slot number,
 -- and a command
-type PValue = (Int, Int, Cmd)
+type PValue = (BN, Int, Cmd)
 
-data P1AMsg = P1AMsg { to :: Host, leader :: Host, ballot :: Int } deriving (Generic, Binary)
-data P1BMsg = P1BMsg { to :: Host, from   :: Host, ballot :: Int, accepted :: Set PValue } deriving (Generic, Binary)
+-- | Ballot number
+type BN = (Int, Host)
+
+data P1AMsg = P1AMsg { to :: Host, leader :: Host, ballot :: BN } deriving (Generic, Binary)
+data P1BMsg = P1BMsg { to :: Host, from   :: Host, ballot :: BN, accepted :: Set PValue } deriving (Generic, Binary)
 
 data P2AMsg = P2AMsg { to :: Host, leader :: Host, pv :: PValue } deriving (Generic, Binary)
-data P2BMsg = P2BMsg { to :: Host, from   :: Host, ballot :: Int } deriving (Generic, Binary)
+data P2BMsg = P2BMsg { to :: Host, from   :: Host, ballot :: BN } deriving (Generic, Binary)
+
+data PreemptedMsg = PreemptedMsg { to :: Host, ballot :: BN } deriving (Generic, Binary)
+data AdoptedMsg = AdoptedMsg { to :: Host, ballot :: BN, pvalues :: Set PValue } deriving (Generic, Binary)
+
