@@ -44,7 +44,8 @@ import Prelude hiding ( (==), compare, (<=), (<), (>=), (>), (&&), (||), not
 import qualified Prelude as P
 
 import System.Distributed.Free
-import System.Distributed.Core
+import System.Distributed.Core hiding ((:=))
+import qualified System.Distributed.Core as Core
 import Data.Maybe
 
 default (Int)
@@ -81,6 +82,11 @@ call = id
 
 --------------------------------------------------------------------------------
 -- * Mutability
+
+-- Redefine with LiftS
+pattern (:=) :: LiftS b a => Mutable a -> b -> System ()
+pattern (:=) <- _ {- what does this direction mean -}
+  where (:=) ref x = liftS x >>= (ref Core.:=)
 
 -- | Let's sell it as "copying".
 -- Whenever we want to use the value of a mutable reference immutabily, for

@@ -26,7 +26,7 @@ data PaxosConf s cli = PaxosConf
 
 data RandomOp = ROP {time::Int,seq::Int} deriving Generic
 
-paxos :: (FromCli ::: st) ~ st
+paxos :: (Show st, (FromCli ::: st) ~ st, UnliftedS st ~ st)
       => Map String (st -> (st, String)) -- ^ Known operations
       -> PaxosConf st FromCli  -- ^ The configuration read from the command line interface
       -> Protocol "paxos"
