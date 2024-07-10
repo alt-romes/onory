@@ -4,6 +4,7 @@
 -- other core bits used to define the language.
 module System.Distributed.Free where
 
+import Data.Char
 import GHC.Fingerprint
 import GHC.Records
 import Data.Binary
@@ -19,7 +20,6 @@ import Control.Monad.Free
 -- import Control.Monad.Free.Church (TODO!!)
 import Control.Monad.Free.TH
 import Options.Generic
-import Data.Bifunctor
 
 -- | A distributed system specification
 type System = Free SystemF
@@ -200,7 +200,11 @@ instance IsString Host where
     -- invariant: the nodes always use a single endpoint no 0
 
 instance Read Host where
-  readsPrec i = map (first (fromString @Host)) <$> readsPrec @String i
+  readsPrec _ input =
+    let (hostname,rest1) = break (== ':') input
+        rest2 = drop 1 rest1
+        (port,rest3) = span isDigit rest2
+     in [(fromString @Host (hostname ++ ":" ++ port), rest3)]
 
 instance ParseRecord Host where
   parseRecord = fmap getOnly parseRecord

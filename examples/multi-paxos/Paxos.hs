@@ -96,7 +96,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
       propose()
 
     upon receive \DecideMsg{slot, cmd} -> do
-      puts ("Decided: " ++ show cmd ++ " !!!")
+      puts ("Decided: " ++ show cmd)
       decisions += (slot, cmd)
       while (decisions `contains` slot_out) do
         c' <- decisions ! slot_out
@@ -139,7 +139,6 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
     scout myself knownAcceptors bn
 
     upon receive \ProposeMsg{slot=s, cmd=c} -> do
-      puts ("Received a proposal for " ++ show s ++ " with command " ++ show c)
       when (s `notin` proposals) do
         proposals += (s,c)
         when active do
