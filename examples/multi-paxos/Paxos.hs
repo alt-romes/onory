@@ -24,6 +24,8 @@ data PaxosConf s cli = PaxosConf
 --------------------------------------------------------------------------------
 -- Main
 
+data RandomOp = ROP {time::Int,seq::Int} deriving Generic
+
 paxos :: (FromCli ::: st) ~ st
       => Map String (st -> (st, String)) -- ^ Known operations
       -> PaxosConf st FromCli  -- ^ The configuration read from the command line interface
@@ -31,6 +33,15 @@ paxos :: (FromCli ::: st) ~ st
 paxos knownOps PaxosConf{..} = protocol @"paxos" do
   puts "Starting paxos..."
   myself <- self
+
+  setup oneshot timer ROP{time=5000, seq=1}
+
+  upon timer \ROP{seq} -> do
+    r <- random(0,1)
+    op <- if r == 0 then pure "inc" else pure "dec"
+    trigger commandRequest (myself, seq, StateOp op)
+    seq' <- seq+1
+    setup oneshot timer ROP{time=20000, seq=seq'}
 
   protocol @"replica" do -- A sub-protocol
 
