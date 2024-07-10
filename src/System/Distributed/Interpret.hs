@@ -326,6 +326,7 @@ cancelTimerThread tid = H $ \_ -> killThread tid
 -- | Basically 'interpSystem', but sets the (new) protocol executor in the local env
 interpProtocol :: String -> System a -> Core ()
 interpProtocol name proto = do
+  trace 5 $ "Interpreting protocol " ++ name ++ " in new thread"
   (protoExec, tid) <- liftIO newExecutor
   local (\cd -> case cd.inProto of
     TopLevel -> cd{inProto=Scoped name protoExec tid}

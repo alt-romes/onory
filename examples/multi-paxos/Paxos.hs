@@ -240,7 +240,7 @@ pmax pvs = do
 --
 -- An operation is either a string referring to a specific an operation on the
 -- state given in the known operations map, or a reconfiguration operation which carries a set of leaders.
-type Cmd = (Int, Int, Op)
+type Cmd = (Host, Int, Op)
 data Op = StateOp { name :: String }
         | ReconfigOp { leaders :: Set Host }
         deriving (Eq, Ord, Generic, Binary)

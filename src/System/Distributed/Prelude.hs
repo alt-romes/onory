@@ -457,7 +457,7 @@ data NullableValue a = NullValue | ExistsValue { value :: a }
 
 instance HasField "exists" (NullableValue a) Bool where
   getField ExistsValue{} = True
-  getField NullValue{} = True
+  getField NullValue{} = False
 
 -- | Get a nullable value's value, or a default value.
 --
