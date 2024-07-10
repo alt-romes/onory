@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, PatternSynonyms, DataKinds #-}
+{-# LANGUAGE UnicodeSyntax, PatternSynonyms, DataKinds, ViewPatterns #-}
 {-# LANGUAGE AllowAmbiguousTypes #-} -- typeFingerprint
 -- | The core embeded language for distributed systems design.
 --

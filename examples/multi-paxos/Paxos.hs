@@ -31,46 +31,29 @@ paxos :: (FromCli ::: st) ~ st
       -> PaxosConf st FromCli  -- ^ The configuration read from the command line interface
       -> Protocol "paxos"
 paxos knownOps PaxosConf{..} = protocol @"paxos" do
-  puts "Starting paxos..."
   myself <- self
 
-  setup oneshot timer ROP{time=5000, seq=1}
+  puts "Waiting 60s for other nodes to come up..."
+  delay 10000
+  puts "Starting paxos..."
+
+  setup oneshot timer ROP{time=6000, seq=1}
 
   upon timer \ROP{seq} -> do
     r <- random(0,1)
     op <- if r == 0 then pure "inc" else pure "dec"
     trigger commandRequest (myself, seq, StateOp op)
     seq' <- seq+1
-    setup oneshot timer ROP{time=20000, seq=seq'}
+    setup oneshot timer ROP{time=6000, seq=seq'}
 
   protocol @"replica" do -- A sub-protocol
 
-    -- The replica’s copy of the application state, which we will treat as
-    -- opaque. All replicas start with the same initial application state.
     app_state <- new initialState
-    
-    -- The index of the next slot in which the replica has not yet proposed any
-    -- command, initially 1.
     slot_in   <- new 1
-
-    -- The index of the next slot for which it needs to learn a decision before
-    -- it can update its copy of the application state, equivalent to the
-    -- state’s version number (i.e., number of updates) and initially 1.
     slot_out  <- new 1
-
-    -- An initially empty set of requests that the replica has received and are
-    -- not yet proposed or decided.
     requests  <- new (Set @Cmd)
-
-    -- An initially empty map from slots to proposals that are currently outstanding.
     proposals <- new (Map @Int @Cmd)
-
-    -- Another set of proposals that are known to have been decided (also
-    -- initially empty).
     decisions <- new (Map @Int @Cmd)
-
-    -- The set of leaders in the current configuration. The leaders of the
-    -- initial configuration are passed as an argument to the replica.
     leaders   <- new initialLeaders
 
     -- ToDo: Change to procedure syntax
@@ -115,9 +98,10 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
       propose()
 
     upon receive \DecideMsg{slot, cmd} -> do
+      puts ("Decided: " ++ show cmd ++ " !!!")
       decisions += (slot, cmd)
       while (decisions `contains` slot_out) do
-        c' <- proposals ! slot_out
+        c' <- decisions ! slot_out
         c'' <- lookup slot_out proposals
         when (c''.exists) do
           slot_out_val <- get(slot_out)
@@ -158,6 +142,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
     scout myself knownAcceptors bn
 
     upon receive \ProposeMsg{slot=s, cmd=c} -> do
+      puts ("Received a proposal for " ++ show s ++ " with command " ++ show c)
       when (s `notin` proposals) do
         proposals += (s,c)
         when active do
@@ -182,6 +167,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
         scout myself knownAcceptors bn
 
 commander leader acceptors replicas (b,s,c) = protocol @"commander" do
+  puts "Starting a new commander..."
   myself <- self
   wait_for <- new acceptors
 
@@ -200,6 +186,7 @@ commander leader acceptors replicas (b,s,c) = protocol @"commander" do
       exit
 
 scout leader acceptors b = protocol @"scout" do
+  puts "Starting a new scout..."
   myself   <- self
   wait_for <- new acceptors
   pvalues  <- new (Set @PValue)
@@ -254,7 +241,7 @@ pmax pvs = do
 type Cmd = (Host, Int, Op)
 data Op = StateOp { name :: String }
         | ReconfigOp { leaders :: Set Host }
-        deriving (Eq, Ord, Generic, Binary)
+        deriving (Eq, Ord, Show, Generic, Binary)
 
 isReconfig(StateOp{}) = False
 isReconfig(ReconfigOp{}) = True
@@ -262,8 +249,8 @@ isReconfig(ReconfigOp{}) = True
 commandRequest = request @Cmd "Command"
 responseIndication = request @String "ClientResponse"
 
-data ProposeMsg = ProposeMsg { to :: Host, slot :: Int, cmd :: Cmd } deriving (Generic, Binary)
-data DecideMsg  = DecideMsg  { to :: Host, slot :: Int, cmd :: Cmd } deriving (Generic, Binary)
+data ProposeMsg = ProposeMsg { to :: Host, slot :: Int, cmd :: Cmd } deriving (Generic, Binary, Show)
+data DecideMsg  = DecideMsg  { to :: Host, slot :: Int, cmd :: Cmd } deriving (Generic, Binary, Show)
 
 -- | Let a pvalue be a triple consisting of a ballot number, a slot number,
 -- and a command
@@ -272,12 +259,12 @@ type PValue = (BN, Int, Cmd)
 -- | Ballot number
 type BN = (Int, Host)
 
-data P1AMsg = P1AMsg { to :: Host, leader :: Host, ballot :: BN } deriving (Generic, Binary)
-data P1BMsg = P1BMsg { to :: Host, from   :: Host, ballot :: BN, accepted :: Set PValue } deriving (Generic, Binary)
+data P1AMsg = P1AMsg { to :: Host, leader :: Host, ballot :: BN } deriving (Generic, Binary, Show)
+data P1BMsg = P1BMsg { to :: Host, from   :: Host, ballot :: BN, accepted :: Set PValue } deriving (Generic, Binary, Show)
 
-data P2AMsg = P2AMsg { to :: Host, leader :: Host, pv :: PValue } deriving (Generic, Binary)
-data P2BMsg = P2BMsg { to :: Host, from   :: Host, ballot :: BN } deriving (Generic, Binary)
+data P2AMsg = P2AMsg { to :: Host, leader :: Host, pv :: PValue } deriving (Generic, Binary, Show)
+data P2BMsg = P2BMsg { to :: Host, from   :: Host, ballot :: BN } deriving (Generic, Binary, Show)
 
-data PreemptedMsg = PreemptedMsg { to :: Host, ballot :: BN } deriving (Generic, Binary)
-data AdoptedMsg = AdoptedMsg { to :: Host, ballot :: BN, pvalues :: Set PValue } deriving (Generic, Binary)
+data PreemptedMsg = PreemptedMsg { to :: Host, ballot :: BN } deriving (Generic, Binary, Show)
+data AdoptedMsg = AdoptedMsg { to :: Host, ballot :: BN, pvalues :: Set PValue } deriving (Generic, Binary, Show)
 
