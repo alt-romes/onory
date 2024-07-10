@@ -1,0 +1,18 @@
+#!/bin/sh
+
+if test -z "$1" -o -z "$2" -o -z "$3"; then
+    echo "Usage: ./paxos <NN> <port ∈ 25001-250NN> <slot-window>"
+    exit 1
+fi
+
+HN=127.0.0.1
+HOSTS=$(echo $(for i in $(seq 25001 250$1); do echo $HN:$i; done) | tr ' ' ',')
+
+CMD="cabal run multi-paxos -- -V1 -p $2 --paxos-slot-window=$3 \
+    --paxos-initial-state=1 \
+    --paxos-initial-leaders=$HOSTS \
+    --paxos-known-acceptors=$HOSTS \
+    --paxos-known-replicas=$HOSTS"
+
+echo $CMD
+$CMD
