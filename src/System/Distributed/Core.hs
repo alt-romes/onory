@@ -544,6 +544,8 @@ pattern (:=) :: Mutable a -> a -> System ()
 pattern (:=) <- _ {- what does this direction mean -}
   where (:=) ref x = modify ref (const x)
 
+infixr 0 :=
+
 --------------------------------------------------------------------------------
 -- * Logging
 

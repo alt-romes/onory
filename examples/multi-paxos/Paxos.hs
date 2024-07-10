@@ -75,23 +75,20 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
             proposals += (slot_in_copy, random_request)
             foreach leaders \leader_host -> do
               trigger send ProposeMsg{to=leader_host, slot=slot_in_copy, cmd=random_request}
-          next_slot <- slot_in + 1
-          slot_in := next_slot
+          slot_in := slot_in + 1
 
       perform((k,cid,op)) = do
         older_decision <- decisions `randomElemWith'` (\(slot,(k',cid',op')) ->
             slot < slot_out && k == k' && cid == cid' && op == op')
         if (isReconfig(op) || older_decision.exists) then do
-          slot_in_val <- slot_in + 1
-          slot_in := slot_in_val
+          slot_in := slot_in + 1
         else do
           operation  <- lookup op.name knownOps
           state_copy <- copy(app_state)
           let (next, result) = operation.value(state_copy)
           app_state := next
           puts ("New state: " ++ show next)
-          next_slot <- slot_out + 1
-          slot_out := next_slot
+          slot_out := slot_out + 1
           trigger responseIndication result
 
     upon commandRequest \cmdName -> do
@@ -153,8 +150,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
     upon receive \AdoptedMsg{ballot=bn, pvalues=pvals} -> do
       props <- get(proposals)
       pmx   <- pmax(pvals)
-      new_props <- props <| pmx
-      proposals := new_props
+      proposals := props <| pmx
       foreach proposals \(s,c) -> do
         commander myself knownAcceptors knownReplicas (bn, s, c)
       active := true
@@ -196,8 +192,7 @@ scout leader acceptors b = protocol @"scout" do
 
   upon receive \P1BMsg{from=a, ballot=b', accepted=r} -> do
     if b' == b then do
-      new_pvs <- pvalues `union` r
-      pvalues := new_pvs
+      pvalues := pvalues `union` r
       wait_for -= a
       when (size wait_for < (size acceptors `div` 2)) do
         pvs <- get(pvalues)
