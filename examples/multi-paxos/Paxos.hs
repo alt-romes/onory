@@ -89,7 +89,8 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
           state_copy <- copy(app_state)
           let (next, result) = operation.value(state_copy)
           app_state := next
-          next_slot <- slot_in + 1
+          puts ("New state: " ++ show next)
+          next_slot <- slot_out + 1
           slot_out := next_slot
           trigger responseIndication result
 
