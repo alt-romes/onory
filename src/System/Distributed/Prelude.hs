@@ -90,13 +90,6 @@ pattern (:=) <- _ {- what does this direction mean -}
 
 infixr 0 :=
 
--- | Let's sell it as "copying".
--- Whenever we want to use the value of a mutable reference immutabily, for
--- instance, to send in a message, or to store in a different variable, we need
--- to copy the value.
-copy :: Mutable a -> System a
-copy = get
-
 --------------------------------------------------------------------------------
 -- * Sets and maps
 

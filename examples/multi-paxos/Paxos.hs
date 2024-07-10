@@ -69,7 +69,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
               leaders := op.leaders
 
           when (slot_in `notin` decisions) do
-            slot_in_copy <- copy(slot_in)
+            slot_in_copy <- get(slot_in)
             random_request <- randomElem(requests)
             requests -= random_request
             proposals += (slot_in_copy, random_request)
@@ -84,7 +84,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
           slot_in := slot_in + 1
         else do
           operation  <- lookup op.name knownOps
-          state_copy <- copy(app_state)
+          state_copy <- get(app_state)
           let (next, result) = operation.value(state_copy)
           app_state := next
           puts ("New state: " ++ show next)
@@ -102,8 +102,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
         c' <- decisions ! slot_out
         c'' <- lookup slot_out proposals
         when (c''.exists) do
-          slot_out_val <- get(slot_out)
-          proposals -= slot_out_val
+          proposals -= slot_out
           when (c' != c''.value) do
             requests += c''.value
         perform(c')
