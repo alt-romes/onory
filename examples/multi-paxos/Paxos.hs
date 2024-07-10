@@ -40,11 +40,10 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
   setup oneshot timer ROP{time=6000, seq=1}
 
   upon timer \ROP{seq} -> do
-    r <- random(0,1)
-    op <- if r == 0 then pure "inc" else pure "dec"
+    (op,_) <- randomElem(knownOps)
     trigger commandRequest (myself, seq, StateOp op)
     seq' <- seq+1
-    setup oneshot timer ROP{time=6000, seq=seq'}
+    setup oneshot timer ROP{time=1000, seq=seq'}
 
   protocol @"replica" do -- A sub-protocol
 
