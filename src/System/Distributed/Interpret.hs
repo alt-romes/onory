@@ -211,12 +211,9 @@ interpSystem sys = void $ iterM runF sys where
     TriggerEvent x e n          -> trace 4 ("Triggering " ++ show x)  >> queueEvent x e    >>  n
     SetupTimer tt evt timer n   -> trace' "Setting up " evt  >> startTimer tt evt timer    >>  n
     CancelTimer evt n           -> trace' "Handling " evt    >> stopTimer evt              >>  n
-    ModifyState (Mutable a) b n -> liftIO (modifyIORef' a b)                               >>  n
-      -- no need for atomic, handlers in the same protocol run atomically and
-      -- never concurrently... though if you share state across protocols there could be race conditions.
-      -- ToDo: Just use an MVar, or atomicModifyIORef'(if the documentation about its problem is incorrect), better to.
-    MkNew i n                   -> liftIO (Mutable <$> newIORef i)                         >>= n
-    GetState (Mutable a) n      -> liftIO (readIORef a)                                    >>= n
+    ModifyState (Mutable a) b n -> liftIO (modifyMVar_ a (pure . b))                       >>  n
+    MkNew i n                   -> liftIO (Mutable <$> newMVar i)                          >>= n
+    GetState (Mutable a) n      -> liftIO (readMVar a)                                     >>= n
     GetRandom bnds n            -> liftIO (randomRIO bnds)                                 >>= n
     EscapeTheSystem io n        -> liftIO io                                               >>= n
     TraceStr v str n            -> trace v str                                             >>  n
@@ -579,13 +576,6 @@ data CoreData = CoreData
 -- a decoder function whose result we can "safely" unsafe coerce into the
 -- argument expected by the handler for the message whose type has that same
 -- fingerprint.
---
--- MsgDecoders use an MVar because I noticed something weird about atomicity
--- with multiple IORefs at the same time in the documentation of `modifyIORef`,
--- so to avoid problems just use MVar for these.
---
--- ToDo: Change to IORef and do atomicModifyIORef' if safe on multiple vars? or
--- just keep as MVar(and perhaps change others?)
 type MsgDecoders = MVar (Map Fingerprint MsgDecoder)
 data MsgDecoder = forall a. MDEC (Dict (HasField "to" a Host, Binary a))
 

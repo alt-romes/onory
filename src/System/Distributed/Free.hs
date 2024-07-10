@@ -7,7 +7,7 @@ module System.Distributed.Free where
 import GHC.Fingerprint
 import GHC.Records
 import Data.Binary
-import Data.IORef
+import Control.Concurrent.MVar
 import Data.Proxy
 import Data.String
 import Data.Kind
@@ -118,7 +118,7 @@ data Event (evt_t :: Type) where
 -- The fingerprint is the sole field used for the event key ordering.
 
 -- | A mutable variable in a 'System' specification.
-newtype Mutable a = Mutable (IORef a)
+newtype Mutable a = Mutable (MVar a)
 
 -- | The types of timers that can be 'System.Distributed.Core.setup':
 -- 'System.Distributed.Core.periodic' or 'System.Distributed.Core.oneshot'.
