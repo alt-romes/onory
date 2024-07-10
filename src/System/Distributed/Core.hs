@@ -16,8 +16,10 @@ import Data.String
 import Type.Reflection
 import Data.Typeable (typeRepFingerprint)
 import System.Random (Random)
+import Network.Transport (EndPointAddress(..))
 
 import System.Distributed.Free
+import qualified Data.ByteString.Char8 as BS8
 
 --------------------------------------------------------------------------------
 -- * Core
@@ -415,6 +417,10 @@ protocol s = protocolBoundary (symbolVal (Proxy @name)) s >> return (Proxy @name
 exit :: System a
 exit = exitProto
 
+-- | Halt system/protocol computation for x milliseconds.
+delay :: Int {- ^ ms -} -> System ()
+delay = delayMillis
+
 -- | A system primitive that does absolutely nothing,
 -- but can be useful to fill in certain expressions.
 --
@@ -585,6 +591,10 @@ inConnDown    = ChannelEvt (typeRep @InConnDown)
 -- | Manually make a host from a String and an Int.
 host :: String -> Int -> Host
 host hostname port = fromString $ hostname ++ ":" ++ show port
+
+getPort :: Host -> Int
+getPort (Host (EndPointAddress (reverse . BS8.unpack -> '0':':':xs))) = read . reverse $ takeWhile (/= ':') xs
+getPort _ = error "malformed Host"
 
 --------------------------------------------------------------------------------
 -- * Escape hatch

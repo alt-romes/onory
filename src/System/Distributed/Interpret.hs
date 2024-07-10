@@ -220,6 +220,7 @@ interpSystem sys = void $ iterM runF sys where
     GetRandom bnds n            -> liftIO (randomRIO bnds)                                 >>= n
     EscapeTheSystem io n        -> liftIO io                                               >>= n
     TraceStr v str n            -> trace v str                                             >>  n
+    DelayMillis i n             -> liftIO (threadDelay (i*1000))                           >>  n
     ExitProto                   -> exitProtocol
     GetSelf n                   -> n =<< asks self
 
@@ -237,6 +238,10 @@ worker :: Core ()
 worker = Core \cd -> do
   (topLevelExec, _) <- newExecutor -- for top-level handlers
 
+  -- We could wait a bit before processing messages to give time to the
+  -- interpreter to register all handlers. Or maybe we should leave that up to
+  -- the user.
+
   forever $ do
     -- Waits for message
     Msg e t <- readChan cd.msgQueue
@@ -248,6 +253,9 @@ worker = Core \cd -> do
         traceInternal cd $
           "Ignored event " ++ show e -- ++ " given handlers " ++ show (M.toList handlers)
       Just hs -> do
+        -- traceInternal cd $
+        --   "Delegating event " ++ show e ++ " on handlers " ++ show hs
+
         -- Run all handlers with the same message by passing them to the appropriate executor
         forM_ hs \(exectx, H h) -> do
           writeChan (case exectx of TopLevel -> topLevelExec; Scoped _ protoc _ -> protoc)
@@ -267,6 +275,9 @@ registerHandler evt f = Core \cd -> do
       h  = H $ (`unCore` cd) . interpSystem <$> f
   -- Multiple
   atomicModifyIORef' cd.handlers ((,()) . M.insertWith (<>) ek [(cd.inProto,h)])
+
+  hss <- liftIO (readIORef cd.handlers)
+  trace (internalVerbosity+2) ("Registered handlers: " ++ show hss) `unCore` cd
 
   -- Handlers registered for Messages must also store the decoder function (see
   -- 'MsgDecoders') since messages come from the network with a type fingerprint only.
@@ -349,10 +360,17 @@ exitProtocol = do
       -- process will terminate and therefore all other threads will be killed
       -- too.
       syn <- asks mainSync
+      trace 5 "Exiting system..."
       liftIO $ notifySync syn
       return undefined
-    Scoped _n _c thread -> do
-      liftIO $ killThread thread -- Stop running.
+    Scoped n c thread -> do
+      trace 5 $ "Exiting execution of " ++ n ++ "."
+      hss <- asks handlers
+      liftIO $ do
+        killThread thread -- Stop running.
+        -- Must delete all handlers for this protocol context!
+        atomicModifyIORef' hss
+          ((,()) . M.map (filter \(exc,_) -> exc == Scoped n c thread))
       return undefined
 
 newExecutor :: IO (Chan (IO ()), ThreadId)
@@ -533,7 +551,7 @@ data Handler = forall t. H (t -> IO ())
 -- In the case of a scoped context, we keep the name of the protocol context (for
 -- tracing), the scoped protocol key, and the thread id of the running protocol
 -- to kill when the protocol is exited.
-data ExecutorContext = TopLevel | Scoped String ProtocolKey ThreadId
+data ExecutorContext = TopLevel | Scoped String ProtocolKey ThreadId deriving Eq
 
 -- | A protocol key is the channel from which the /executor/ of the protocol
 -- will read saturated handler actions.

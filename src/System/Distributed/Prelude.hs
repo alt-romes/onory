@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, BlockArguments, FunctionalDependencies #-}
+{-# LANGUAGE LambdaCase, PatternSynonyms, ViewPatterns, UnicodeSyntax, DataKinds, TypeFamilies, BlockArguments, FunctionalDependencies, DeriveAnyClass #-}
 {-# LANGUAGE UndecidableInstances #-} -- Eq a => SEq a et friends
 {-# OPTIONS_GHC -Wno-orphans #-} -- Eq a => SEq a et friends
 -- todo: explicit export list of whole language features
@@ -92,7 +92,7 @@ copy = get
 --------------------------------------------------------------------------------
 -- * Sets and maps
 
-class Container a where
+class (Elem (ImmutableCR a) ~ Elem a) => Container a where
   type Elem a :: Type
   type Key  a :: Type
   type ImmutableCR a :: Type
@@ -122,6 +122,7 @@ class Container a where
   toList :: (LiftS b a) => b -> System [Elem a]
   filter :: (LiftS b Bool, LiftS c a) => (Elem a -> b) -> c -> System a
   elToKey :: Proxy a -> Elem a -> Key a
+  immutableCR :: a -> System (ImmutableCR a)
 
 instance P.Ord a => Container (Set a) where
   type Elem (Set a) = a
@@ -144,17 +145,7 @@ instance P.Ord a => Container (Set a) where
     sl <- S.toList <$> liftS x
     S.fromList <$> filterM (liftS . f) sl
   elToKey _ = id
-
-  {-# INLINE foreach #-}
-  {-# INLINE (+=) #-}
-  {-# INLINE (-=) #-}
-  {-# INLINE empty #-}
-  {-# INLINE size #-}
-  {-# INLINE contains #-}
-  {-# INLINE union #-}
-  {-# INLINE (\\) #-}
-  {-# INLINE toList #-}
-  {-# INLINE filter #-}
+  immutableCR = pure
 
 instance P.Ord k => Container (Map k a) where
   type Elem (Map k a) = (k, a)
@@ -176,17 +167,7 @@ instance P.Ord k => Container (Map k a) where
     ml <- M.toList <$> liftS x
     M.fromList <$> filterM (liftS . f) ml
   elToKey _ = fst
-
-  {-# INLINE foreach #-}
-  {-# INLINE (+=) #-}
-  {-# INLINE (-=) #-}
-  {-# INLINE empty #-}
-  {-# INLINE size #-}
-  {-# INLINE contains #-}
-  {-# INLINE union #-}
-  {-# INLINE (\\) #-}
-  {-# INLINE toList #-}
-  {-# INLINE filter #-}
+  immutableCR = pure
 
 instance (UnliftedS a ~ a, Container a) => Container (Mutable a) where
   type Elem (Mutable a) = Elem a
@@ -235,17 +216,7 @@ instance (UnliftedS a ~ a, Container a) => Container (Mutable a) where
     ref := fc
     return ref -- return the same ref that was given
   elToKey _ = elToKey (Proxy @a)
-
-  {-# INLINE foreach #-}
-  {-# INLINE (+=) #-}
-  {-# INLINE (-=) #-}
-  {-# INLINE empty #-}
-  {-# INLINE size #-}
-  {-# INLINE contains #-}
-  {-# INLINE union #-}
-  {-# INLINE (\\) #-}
-  {-# INLINE toList #-}
-  {-# INLINE filter #-}
+  immutableCR = get
 
 -- | A new, empty, set
 pattern Set :: Set a
@@ -283,7 +254,9 @@ instance (UnliftedS a ~ a, MapContainer a) => MapContainer (Mutable a) where
 (!) :: (MapContainer a, LiftS b (Key a), LiftS c a) => c -> b -> System (Lookup a)
 (!) x y = do
   r <- lookup y x
-  return (value r)
+  case r of
+    NullValue -> error "Failed to find key in map in some expression map ! key" -- ++ show k ++ " in map " ++ show m
+    ExistsValue v -> return v
 
 --------------------------------------------------------------------------------
 -- * Expressions
@@ -408,12 +381,13 @@ randomElem x = do
   flip orDefault (error "randomElemWith: container is empty!") <$>
     randomElem' x
 
-randomElemWith :: (Container a, LiftS b a) => b -> (Elem a -> System Bool) -> System (Elem a)
+randomElemWith :: (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)))
+               => b -> (Elem a -> System Bool) -> System (Elem a)
 randomElemWith container cond =
   flip orDefault (error "randomElemWith: container is empty!") <$>
     randomElemWith' container cond
 
-randomElem' :: (Container a, LiftS b a) => b -> System (NullableValue (Elem a))
+randomElem' :: ∀ a b. (Container a, LiftS b a) => b -> System (NullableValue (Elem a))
 randomElem' x = do
   c <- liftS x
   l <- toList (pure @System c)
@@ -424,19 +398,29 @@ randomElem' x = do
   else do
     return NullValue
 
-randomElemWith' :: ∀ a b. (Container a, LiftS b a) => b -> (Elem a -> System Bool) -> System (NullableValue (Elem a))
+randomElemWith' :: ∀ a b. (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)))
+                => b -> (Elem a -> System Bool) -> System (NullableValue (Elem a))
 randomElemWith' container cond = do
-  mn <- randomElem' container
-  case mn of
-    NullValue -> return NullValue
-    ExistsValue n ->
-      ifThenElse (cond n)
-        (return (ExistsValue n))
-        (randomElemWith' container cond)
+  c <- liftS container
+  ic <- immutableCR c
+  go ic
+  where
+    go :: ImmutableCR a -> System (NullableValue (Elem a))
+    go ic = do
+      mn <- randomElem' ic
+      case mn of
+        NullValue -> return NullValue
+        ExistsValue n -> do
+          ic' <- ic -= elToKey (Proxy @(ImmutableCR a)) n
+          ifThenElse (cond n)
+            (return (ExistsValue n))
+            (go ic')
 
--- | Extract a random subset out of this container.
--- If this is a mutable container, the reference will be written with the random subset.
-randomSubset :: ∀ a b c. (Container a, LiftS b a, LiftS c Int, Container (ImmutableCR a), Container (UnliftedS (ImmutableCR a)), Elem a ~ Elem (ImmutableCR a), (Key (UnliftedS (ImmutableCR a)) ~ UnliftedS (Key (ImmutableCR a))), (LiftS (Key (ImmutableCR a)) (UnliftedS (Key (ImmutableCR a))), LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a))))
+-- | Extract a random subset out of this container. Returns an immutable copy of
+-- the container random subset.
+-- If this is a mutable container, the reference will be unchanged.
+randomSubset :: ∀ a b c. (Container a, LiftS b a, LiftS c Int, Container (ImmutableCR a),
+                UnliftedS (ImmutableCR a) ~ ImmutableCR a, Elem a ~ Elem (ImmutableCR a), (Key (UnliftedS (ImmutableCR a)) ~ UnliftedS (Key (ImmutableCR a))), (LiftS (Key (ImmutableCR a)) (UnliftedS (Key (ImmutableCR a))), LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a))))
              => (b, c) -> System (ImmutableCR a)
 randomSubset (c, ln) = do
   container <- liftS c
@@ -453,11 +437,16 @@ randomSubset (c, ln) = do
   e <- empty @(ImmutableCR a)
   go e (min s n)
 
-data NullableValue a = NullValue | ExistsValue { value :: a }
+data NullableValue a = NullValue | ExistsValue { value :: a } deriving (Eq, Ord, Generic, Binary)
 
 instance HasField "exists" (NullableValue a) Bool where
   getField ExistsValue{} = True
-  getField NullValue{} = False
+  getField NullValue = False
+
+instance Show a => Show (NullableValue a) where
+  show NullValue = "null"
+  show ExistsValue{value} = show value
+
 
 -- | Get a nullable value's value, or a default value.
 --

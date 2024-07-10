@@ -82,6 +82,9 @@ data SystemF next where
   TraceStr
     :: Verbosity -> String -> next -> SystemF next
 
+  DelayMillis
+    :: Int {- ms -} -> next -> SystemF next
+
   ExitProto
     :: SystemF next
 
@@ -164,6 +167,7 @@ instance Functor SystemF where
     SetupTimer tt evt timer next -> SetupTimer tt evt timer (f next)
     CancelTimer evt n -> CancelTimer evt (f n)
     TraceStr i s n -> TraceStr i s (f n)
+    DelayMillis i n -> DelayMillis i (f n)
     ExitProto -> ExitProto
     EscapeTheSystem io n -> EscapeTheSystem io (f . n)
 
