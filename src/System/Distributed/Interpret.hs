@@ -186,17 +186,18 @@ runCore SysConf{..} c = do
   msgDecoders <- newMVar M.empty
   handlers    <- newIORef M.empty
   msgQueue    <- newChan
-  sync        <- newEmptyMVar
+  mainSync    <- newSync
 
   (self, outgoingMsgs) <- initTcpManager verbosity hostname port msgDecoders msgQueue
 
   let coreData = CoreData { msgQueue, handlers, inProto = TopLevel
                           , verbosity, outgoingMsgs, self, msgDecoders
+                          , mainSync
                           }
 
-  _ <- forkFinally (worker `unCore` coreData) (\_ -> putMVar sync ())
-  _ <- c `unCore` coreData
-  return (Sync sync)
+  _tid <- forkIO (worker `unCore` coreData)
+  _    <- c `unCore` coreData
+  return mainSync
 
 -- | Interpret a 'System' into the t'Core' system runtime monad.
 interpSystem :: System a -> Core ()
@@ -219,6 +220,7 @@ interpSystem sys = void $ iterM runF sys where
     GetRandom bnds n            -> liftIO (randomRIO bnds)                                 >>= n
     EscapeTheSystem io n        -> liftIO io                                               >>= n
     TraceStr v str n            -> trace v str                                             >>  n
+    ExitProto                   -> exitProtocol
     GetSelf n                   -> n =<< asks self
 
   trace' kw x = trace 3 (kw ++ show x)
@@ -233,7 +235,7 @@ interpSystem sys = void $ iterM runF sys where
 -- executor.
 worker :: Core ()
 worker = Core \cd -> do
-  topLevelExec <- newExecutor -- for top-level handlers
+  (topLevelExec, _) <- newExecutor -- for top-level handlers
 
   forever $ do
     -- Waits for message
@@ -248,7 +250,7 @@ worker = Core \cd -> do
       Just hs -> do
         -- Run all handlers with the same message by passing them to the appropriate executor
         forM_ hs \(exectx, H h) -> do
-          writeChan (case exectx of TopLevel -> topLevelExec; Scoped _ protoc -> protoc)
+          writeChan (case exectx of TopLevel -> topLevelExec; Scoped _ protoc _ -> protoc)
             (unsafeCoerce h t)
 
 -- | Call 'wait' on the result of 'runCore' to halt the main thread until the
@@ -324,19 +326,39 @@ cancelTimerThread tid = H $ \_ -> killThread tid
 -- | Basically 'interpSystem', but sets the (new) protocol executor in the local env
 interpProtocol :: String -> System a -> Core ()
 interpProtocol name proto = do
-  protoExec <- liftIO newExecutor
+  (protoExec, tid) <- liftIO newExecutor
   local (\cd -> case cd.inProto of
-    TopLevel -> cd{inProto=Scoped name protoExec}
+    TopLevel -> cd{inProto=Scoped name protoExec tid}
     -- TODO: Test nested protocols and see if they do the right thing.
     -- What about forM nested protocol with the same name? curious...
-    Scoped parent_name _ -> cd{inProto=Scoped (parent_name ++ "-" ++ name) protoExec}
+    Scoped parent_name _ _ -> cd{inProto=Scoped (parent_name ++ "-" ++ name) protoExec tid}
     ) $ interpSystem proto
 
-newExecutor :: IO (Chan (IO ()))
+-- | Kill a running protocol. But keep all other protocol threads running.
+--
+-- If the execution context is the top-level on exit, this notifies the
+-- synchronisation variable which should terminate the program and kill all
+-- remaining threads (if this ever happens to not be the case, we can think
+-- about tracking all thread ids for killing).
+exitProtocol :: Core a
+exitProtocol = do
+  asks inProto >>= \case
+    TopLevel -> {- the end -} do
+      -- notifying the top-level synchronisation variable means the whole
+      -- process will terminate and therefore all other threads will be killed
+      -- too.
+      syn <- asks mainSync
+      liftIO $ notifySync syn
+      return undefined
+    Scoped _n _c thread -> do
+      liftIO $ killThread thread -- Stop running.
+      return undefined
+
+newExecutor :: IO (Chan (IO ()), ThreadId)
 newExecutor = do
   ch <- newChan
-  _ <- forkIO $ forever $ join (readChan ch) -- read an action from the channel and execute it forever
-  return ch
+  tid <- forkIO $ forever $ join (readChan ch) -- read an action from the channel and execute it forever
+  return (ch, tid)
 
 --------------------------------------------------------------------------------
 -- * Trace
@@ -501,7 +523,16 @@ type Handlers = IORef (Map EventKey [(ExecutorContext, Handler)])
 -- that maps to this handler in the handlers map.
 data Handler = forall t. H (t -> IO ())
 
-data ExecutorContext = TopLevel | Scoped String ProtocolKey
+-- | Either top-level execution context, or a protocol-scoped execution context.
+--
+-- In the case of a top-level context, we keep a synchronisation variable to
+-- notify if the top-level context was terminated -- the main thread will
+-- terminate after being notified in the main sync point and kill all to.
+--
+-- In the case of a scoped context, we keep the name of the protocol context (for
+-- tracing), the scoped protocol key, and the thread id of the running protocol
+-- to kill when the protocol is exited.
+data ExecutorContext = TopLevel | Scoped String ProtocolKey ThreadId
 
 -- | A protocol key is the channel from which the /executor/ of the protocol
 -- will read saturated handler actions.
@@ -521,6 +552,7 @@ data CoreData = CoreData
   , outgoingMsgs :: MsgQueue
   , self :: Host
   , msgDecoders :: MsgDecoders
+  , mainSync :: Sync
   }
 
 -- | We need a way of converting a bytestring we got from the net into a type
@@ -543,6 +575,12 @@ data EventKey = forall t. EK (Event t)
 
 newtype Sync = Sync (MVar ())
 
+notifySync :: Sync -> IO ()
+notifySync (Sync s) = putMVar s ()
+
+newSync :: IO Sync
+newSync = Sync <$> newEmptyMVar
+
 --------------------------------------------------------------------------------
 -- * Instances
 
@@ -550,8 +588,8 @@ instance Show Handler where
   show _ = "<handler>"
 
 instance Show ExecutorContext where
-  show TopLevel = "Core"
-  show (Scoped n _) = n
+  show TopLevel{} = "Core"
+  show (Scoped n _ _) = n
 
 deriving instance Show EventKey
 

@@ -408,6 +408,13 @@ logStr = traceStr
 protocol :: ∀ name a. KnownSymbol name => System a -> Protocol name
 protocol s = protocolBoundary (symbolVal (Proxy @name)) s >> return (Proxy @name)
 
+-- | Terminate a protocol. Note that this will only exit the running protocol
+-- thread, and all other protocols in the system will keep running.
+--
+-- NB: No instructions after exit get run.
+exit :: System a
+exit = exitProto
+
 -- | A system primitive that does absolutely nothing,
 -- but can be useful to fill in certain expressions.
 --
