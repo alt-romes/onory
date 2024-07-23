@@ -393,17 +393,26 @@ any f t = P.or <$> (traverse (liftS . f) =<< liftS t)
 --------------------------------------------------------------------------------
 -- * Random
 
+-- | Take a random element from a container.
+-- If the container is empty the thread running this instruction will crash (you
+-- may be looking for "randomElem'" instead).
 randomElem :: (Container a, LiftS b a) => b -> System (Elem a)
 randomElem x = do
   flip orDefault (error "randomElemWith: container is empty!") <$>
     randomElem' x
 
+-- | Take a random element from a container under a given condition.
+-- If no element is available the thread running this instruction will crash.
+--
+-- Using "randomElemWith'" is preferred.
 randomElemWith :: (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)), LiftS (Key (ImmutableCR a)) (Key (ImmutableCR a)))
                => b -> (Elem a -> System Bool) -> System (Elem a)
 randomElemWith container cond =
   flip orDefault (error "randomElemWith: container is empty!") <$>
     randomElemWith' container cond
 
+-- | Take a random element from a container.
+-- If the container is empty, returns null.
 randomElem' :: ∀ a b. (Container a, LiftS b a) => b -> System (NullableValue (Elem a))
 randomElem' x = do
   c <- liftS x
@@ -415,6 +424,8 @@ randomElem' x = do
   else do
     return NullValue
 
+-- | Take a random element from a container under a given condition.
+-- If no element is available, returns null.
 randomElemWith' :: ∀ a b. (Container a, LiftS b a, Container (ImmutableCR a), UnliftedS (ImmutableCR a) ~ ImmutableCR a, LiftS (ImmutableCR a) (UnliftedS (ImmutableCR a)), LiftS (Key (ImmutableCR a)) (Key (ImmutableCR a))) -- these instances are needed because they are type families probably
                 => b -> (Elem a -> System Bool) -> System (NullableValue (Elem a))
 randomElemWith' container cond = do
