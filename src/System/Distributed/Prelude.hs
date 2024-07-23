@@ -81,7 +81,7 @@ call :: ∀ a. a -> a
 call = id
 
 --------------------------------------------------------------------------------
--- * Mutability
+-- * Mutability, utils, etc...
 
 -- Redefine with LiftS
 pattern (:=) :: LiftS b a => Mutable a -> b -> System ()
@@ -89,6 +89,20 @@ pattern (:=) <- _ {- what does this direction mean -}
   where (:=) ref x = liftS x >>= (ref Core.:=)
 
 infixr 0 :=
+
+-- | Construct a pair
+(***) :: (LiftS b a, LiftS d c) => b -> d -> System (a, c)
+(***) a b = (,) <$> liftS a <*> liftS b
+
+infixl 8 ***
+
+-- | Match on a value
+--
+-- @
+-- (a, b) <- match some_tuple
+-- @
+match :: (LiftS b a) => b -> System a
+match = liftS
 
 --------------------------------------------------------------------------------
 -- * Sets and maps

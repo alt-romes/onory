@@ -63,15 +63,15 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
           -- Reconfigure
           reconf_decision <- lookup (slot_in - slotWindow) decisions
           when (reconf_decision.exists) do
-            let (_, _, op) = reconf_decision.value
+            (_, _, op) <- match(reconf_decision.value)
             when (isReconfig(op)) do
               leaders := op.leaders
 
           when (slot_in `notin` decisions) do
-            slot_in_copy <- get(slot_in)
             random_request <- randomElem(requests)
             requests -= random_request
-            proposals += (slot_in_copy, random_request)
+            slot_in_copy <- get(slot_in)
+            proposals += (slot_in_copy *** random_request)
             foreach leaders \leader_host -> do
               trigger send ProposeMsg{to=leader_host, slot=slot_in_copy, cmd=random_request}
           slot_in := slot_in + 1
@@ -84,7 +84,7 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
         else do
           operation  <- lookup op.name knownOps
           state_copy <- get(app_state)
-          let (next, result) = operation.value(state_copy)
+          (next, result) <- match(operation.value(state_copy))
           app_state := next
           puts ("New state: " ++ show next)
           slot_out := slot_out + 1
@@ -145,9 +145,8 @@ paxos knownOps PaxosConf{..} = protocol @"paxos" do
           commander myself knownAcceptors knownReplicas (bn, s, c)
 
     upon receive \AdoptedMsg{ballot=bn, pvalues=pvals} -> do
-      props <- get(proposals)
-      pmx   <- pmax(pvals)
-      proposals := props <| pmx
+      pmx <- pmax(pvals)
+      proposals := proposals <| pmx
       foreach proposals \(s,c) -> do
         commander myself knownAcceptors knownReplicas (bn, s, c)
       active := true
@@ -208,7 +207,7 @@ pmax pvs = do
   foreach pvs \(b, s, c) -> do
     r <- lookup s slot_ballots 
     if r.exists then do
-      let (b', _c') = r.value
+      (b', _c') <- match(r.value)
       when (b > b') do
         slot_ballots += (s, (b,c)) -- overwrites
     else do
@@ -219,8 +218,7 @@ pmax pvs = do
   foreach slot_ballots \(s, (_,c)) -> do
     result += (s,c)
 
-  res <- get(result)
-  return res
+  return result
 
 --------------------------------------------------------------------------------
 -- * Interface
