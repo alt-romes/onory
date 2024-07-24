@@ -1,5 +1,4 @@
 {-# LANGUAGE UnicodeSyntax, PatternSynonyms, DataKinds, ViewPatterns #-}
-{-# LANGUAGE AllowAmbiguousTypes #-} -- typeFingerprint
 -- | The core embeded language for distributed systems design.
 --
 -- In contrast, the prelude module exports this module plus the kitchen sink
@@ -7,14 +6,12 @@
 -- of using this embedded language as proper Haskell.
 module System.Distributed.Core where
 
-import GHC.Fingerprint
 import GHC.Records
 import GHC.TypeLits
 import Data.Binary
 import Data.Proxy
 import Data.String
 import Type.Reflection
-import Data.Typeable (typeRepFingerprint)
 import System.Random (Random)
 import Network.Transport (EndPointAddress(..))
 
@@ -65,6 +62,10 @@ self = getSelf
 --     'System.Distributed.Core.print' host
 -- @
 --
+-- NB: Should an external process be able to subscribe to a remote processes'
+-- indication? Symmetrically, requests can be triggered remotely (see below).
+-- Or should it be the process internally handling requests and indications?
+--
 -- == Requests
 --
 -- Requests work very much like indications, but conceptually reflect a
@@ -104,6 +105,8 @@ self = getSelf
 --      -- Send message to all known nodes
 --      ...
 -- @
+--
+-- NB: Requests can also be triggered remotely using 'System.Distributed.Interpret.runRequest'.
 --
 -- == Messages
 --
@@ -445,18 +448,18 @@ ok = pure ()
 -- 
 -- See the example under 'trigger' for messages.
 send :: ∀ msg. (HasField "to" msg Host, Binary msg) => Typeable msg => Event msg
-send = Message (typeFingerprint @msg) (show (typeRep @msg))
+send = Message (typeFingerprint (typeRep @msg)) (show (typeRep @msg))
 
 -- | A message event for receiving messages. A message event is fully defined by
 -- its associated datatype @msg@.
 --
 -- See the example under 'upon' for messages.
 receive :: ∀ msg. (HasField "to" msg Host, Binary msg) => Typeable msg => Event msg
-receive = Message (typeFingerprint @msg) (show (typeRep @msg))
+receive = Message (typeFingerprint (typeRep @msg)) (show (typeRep @msg))
 
 -- | Make a request event from a name and associated content type.
 -- See 'trigger' and 'upon' for examples on how to use 'request'.
-request :: ∀ req. Typeable req => String -> Event req
+request :: ∀ req. (Typeable req, Binary req) => String -> Event req
 request name = Request name (typeRep @req)
 
 -- | Make an indication event from a name and associated content type.
@@ -605,8 +608,4 @@ getPort _ = error "malformed Host"
 -- onory as a Haskell library rather than embedded language.
 doIO :: IO a -> System a
 doIO = escapeTheSystem
-
--- | An internal function for type magic
-typeFingerprint :: ∀ msg. Typeable msg => Fingerprint
-typeFingerprint = typeRepFingerprint $ SomeTypeRep (typeRep @msg)
 

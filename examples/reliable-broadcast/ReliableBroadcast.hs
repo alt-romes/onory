@@ -19,8 +19,8 @@ default (Int)
 --------------------------------------------------------------------------------
 -- Interface
 
-rbReq = request @String "rbReq"
-rbDeliver = indication @String "rbIndication"
+rbReq = request @String "rbBroadcast"
+rbDeliver = indication @String "rbDeliver"
 
 reliableBroadcast NoConf = protocol @"rb" do
 

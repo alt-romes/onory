@@ -23,7 +23,7 @@ default (Int)
 --------------------------------------------------------------------------------
 -- Interface
 
-bebReq, bebDeliver :: ∀ payload. Typeable payload => Event payload
+bebReq, bebDeliver :: ∀ payload. (Typeable payload, Binary payload) => Event payload
 bebReq     = request @payload "bebBroadcast"
 bebDeliver = indication @payload "bebDeliver"
 

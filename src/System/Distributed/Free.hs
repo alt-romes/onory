@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase, DuplicateRecordFields, ViewPatterns #-}
+{-# LANGUAGE TemplateHaskell, GADTs, DataKinds, LambdaCase, DuplicateRecordFields, ViewPatterns, UnicodeSyntax #-}
 -- | The functor generating the free monad for the system, core datatypes like
 -- t'Event', TH-derived free-monad actions for every functor constructor, and
 -- other core bits used to define the language.
@@ -6,6 +6,7 @@ module System.Distributed.Free where
 
 import Data.Char
 import GHC.Fingerprint
+import Data.Typeable (typeRepFingerprint)
 import GHC.Records
 import Data.Binary
 import Control.Concurrent.MVar
@@ -100,7 +101,8 @@ data SystemF next where
 -- The handlers for a given event will be executed when said event is triggered.
 data Event (evt_t :: Type) where
   Request
-    :: { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
+    :: (Typeable evt_t, Binary evt_t) {- for RequestOverNetwork -}
+    => { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
   Indication
     :: { name :: String, argTy :: TypeRep evt_t } -> Event evt_t
   Message
@@ -176,6 +178,11 @@ $(makeFree ''SystemF)
 
 --------------------------------------------------------------------------------
 -- Instances and utilities
+
+-- | An internal function for type magic
+typeFingerprint :: ∀ msg. TypeRep msg -> Fingerprint
+typeFingerprint = typeRepFingerprint . SomeTypeRep
+
 
 instance Show (Event t) where
   show e = case e of

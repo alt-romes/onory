@@ -16,10 +16,14 @@
 -- parsed into the execution of the program.
 module System.Distributed.Interpret
   (
+  -- * Main
   -- | 'runProtos' and 'runSystem' are the two main entrypoints for interpreting a 'System'
     runProtos, runSystem, readConf
 
   , SysConf, SysConf'(..), P(..)
+
+  -- * Triggering requests
+  , runRequest
 
   -- * Low-level interface
   -- | You may want to use these primitives for low-level uses of the library.
@@ -54,6 +58,8 @@ import System.Distributed.Free
 import qualified Data.Char as C
 import Data.Proxy
 import Data.Traversable (for)
+
+import qualified System.Distributed.Core as SDC
 
 --------------------------------------------------------------------------------
 -- * Runners
@@ -175,6 +181,20 @@ data P = forall c name. ( GenericParseRecord (Rep (c Wrapped))
 data SomeP = forall name. SomeP (Protocol name)
 
 --------------------------------------------------------------------------------
+-- * Triggering requests
+
+-- | Issue a request to a remote process executing a protocol from IO.
+runRequest :: (Typeable a, Binary a)
+           => Int {- port to run on, if done more directly this might've not been needed -}
+           -> Event a
+           -> a -> Host -> IO ()
+runRequest port req payload host =
+  wait =<< runCore SysConf{hostname="127.0.0.1", verbosity=1, port} (interpSystem core)
+  where
+    core = SDC.trigger SDC.send RequestOverNetwork{to=host, reqName = req.name, req=payload} >> SDC.exit
+    -- The payload of the message will be triggered as a request with the same type.
+
+--------------------------------------------------------------------------------
 -- * Interpreter
 
 -- | Run a t'Core' action directly given a system configuration.
@@ -284,6 +304,14 @@ registerHandler evt f = Core \cd -> do
         -- insert may override the existing decoder if multiple handlers for the
         -- same message are defined, but this is fine since the decoder will always
         -- be the same (the Binary instance decoder)
+    Request{name} -> do {- matching on Message gives us a Binary instance for @t@ -}
+      -- To enable requests-over-network, for every request handler we also
+      -- register a special message handler for 'RequestOverNetwork' which
+      -- triggers the request. 'RequestOverNetwork' messages can be sent by
+      -- clients doing requests-over-network (eg using 'runRequest').
+      registerHandler Message{tyId=typeFingerprint (typeRep @(RequestOverNetwork t)), tyStr=show (typeRep @(RequestOverNetwork t))}
+        (\RequestOverNetwork{req, reqName} ->
+          when (reqName == name) (SDC.trigger evt req)) `unCore` cd
     _ -> pure ()
 
 queueEvent :: Event t -> t -> Core ()
@@ -400,7 +428,7 @@ internalVerbosity = 5
 --------------------------------------------------------------------------------
 -- * Network
 
--- network-transport(-tcp) take care of reusing transport between two hosts and
+-- network-transport(-tcp) should take care of reusing transport between two hosts and
 -- providing lightweight connections between endpoints (see
 -- https://hackage.haskell.org/package/network-transport-tcp/docs/Network-Transport-TCP.html)
 
@@ -420,7 +448,6 @@ initTcpManager v hostname port decoders coreMsgQ = do
   -- connect to this node.
   let netTrace s = traceIO internalVerbosity s v "Network"
 
-  -- todo: getAddr. For now, use localhost on different ports
   transport <- either (error . show) id <$>
     N.createTransport (N.defaultTCPAddr hostname (show port)) N.defaultTCPParameters
   endpoint <- either (error . show) id <$>
@@ -438,6 +465,7 @@ initTcpManager v hostname port decoders coreMsgQ = do
     event <- N.receive endpoint
     case event of
       N.Received _ [payload] -> do
+        -- Purposefully verbosity+1 instead of netTrace
         traceIO (internalVerbosity+1) ("Received message over the wire " ++ show payload) v "Network"
         let NetworkMessage{tyId, tyStr, msgPayload} = ndecode payload
         M.lookup tyId <$> readMVar decoders >>= \case
@@ -513,6 +541,7 @@ initTcpManager v hostname port decoders coreMsgQ = do
 -- timeout automatically
 
 data NetworkMessage = NetworkMessage { tyId :: Fingerprint, tyStr :: String, msgPayload :: ByteString } deriving (Generic, Binary)
+data RequestOverNetwork a = RequestOverNetwork { to :: Host, reqName :: String, req :: a } deriving (Generic, Binary)
 
 nencode :: Binary a => a -> ByteString
 nencode = toStrict . encode
