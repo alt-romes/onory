@@ -488,6 +488,12 @@ orDefault NullValue d = d
 orDefault ExistsValue{value} _d = value
 
 --------------------------------------------------------------------------------
+-- * Conf utils
+
+-- | An empty configuration type for protocols that have no configuration.
+data NoConf w = NoConf deriving (Generic, ParseRecord)
+
+--------------------------------------------------------------------------------
 -- * Utilities
 
 type family UnliftedS a where

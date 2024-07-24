@@ -24,6 +24,8 @@ data PaxosConf s cli = PaxosConf
 --------------------------------------------------------------------------------
 -- Main
 
+-- TODO: Trigger reconfigure somewhen. Currently, a reconfigure message is never sent.
+
 data RandomOp = ROP {time::Int,seq::Int} deriving Generic
 
 paxos :: (Show st, (FromCli ::: st) ~ st, UnliftedS st ~ st)
